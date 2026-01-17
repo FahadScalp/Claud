@@ -1,119 +1,379 @@
 <!doctype html>
-<html lang="ar">
+<html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>MT4 Accounts Dashboard</title>
+  <title>لوحة إدارة حسابات MT4</title>
   <style>
-    body{font-family:Arial;background:#0f1115;color:#e8e8e8;margin:16px}
-    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
-    button{padding:10px 12px;border:0;border-radius:10px;cursor:pointer}
-    .danger{background:#ff3b30;color:#fff}
-    .card{background:#161a22;border:1px solid #2a3140;border-radius:14px;padding:12px;margin:10px 0}
-    table{width:100%;border-collapse:collapse}
-    th,td{border-bottom:1px solid #2a3140;padding:8px;text-align:center;font-size:14px}
-    th{color:#b8c0d6}
-    .muted{color:#98a2b3}
-    .ok{color:#4ade80}
-    .bad{color:#fb7185}
-    input{padding:10px;border-radius:10px;border:1px solid #2a3140;background:#0f1115;color:#e8e8e8}
+    :root{
+      --bg:#0b0f14;
+      --card:#0f1620;
+      --card2:#101a26;
+      --text:#e6edf3;
+      --muted:#8aa0b3;
+      --line:#1e2a39;
+      --good:#22c55e;
+      --bad:#ef4444;
+      --warn:#f59e0b;
+      --btn:#ef4444;
+      --btn2:#1f2937;
+      --shadow: 0 10px 25px rgba(0,0,0,.35);
+      --radius:16px;
+    }
+    html,body{height:100%}
+    body{
+      margin:0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: radial-gradient(1200px 600px at 80% 10%, rgba(45,212,191,.08), transparent),
+                  radial-gradient(900px 500px at 10% 20%, rgba(59,130,246,.07), transparent),
+                  var(--bg);
+      color:var(--text);
+    }
+    .wrap{max-width:1200px;margin:24px auto;padding:0 16px}
+    .topbar{
+      display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+      margin-bottom:16px;
+    }
+    .title{
+      display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;
+      font-weight:700;font-size:20px;
+    }
+    .subtitle{color:var(--muted);font-weight:500;font-size:13px}
+    .controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .input{
+      background: rgba(255,255,255,.04);
+      border:1px solid var(--line);
+      color:var(--text);
+      padding:10px 12px;
+      border-radius:12px;
+      outline:none;
+      min-width:240px;
+    }
+    .btn{
+      border:0; cursor:pointer;
+      border-radius:12px;
+      padding:10px 14px;
+      font-weight:700;
+      color:white;
+      background:var(--btn);
+      box-shadow: var(--shadow);
+      display:inline-flex;align-items:center;gap:8px;
+    }
+    .btn.secondary{background:var(--btn2); box-shadow:none; border:1px solid var(--line); color:var(--text)}
+    .card{
+      background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.00));
+      border:1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+    table{width:100%;border-collapse:separate;border-spacing:0}
+    thead th{
+      text-align:right;
+      font-size:13px;
+      color:var(--muted);
+      background: rgba(255,255,255,.02);
+      padding:14px 14px;
+      border-bottom:1px solid var(--line);
+      position:sticky; top:0;
+      backdrop-filter: blur(6px);
+    }
+    tbody td{
+      padding:14px 14px;
+      border-bottom:1px solid rgba(255,255,255,.05);
+      font-size:14px;
+    }
+    tbody tr:hover{background: rgba(255,255,255,.02)}
+    .pill{
+      display:inline-block;
+      padding:6px 10px;
+      border-radius:999px;
+      font-weight:800;
+      font-size:13px;
+      border:1px solid rgba(255,255,255,.10);
+      background: rgba(255,255,255,.03);
+      min-width:86px;
+      text-align:center;
+      direction:ltr;
+    }
+    .good{color:var(--good); border-color: rgba(34,197,94,.35); background: rgba(34,197,94,.08)}
+    .bad{color:var(--bad); border-color: rgba(239,68,68,.35); background: rgba(239,68,68,.08)}
+    .muted{color:var(--muted)}
+    .action-cell{width:130px}
+    .rowbtn{
+      border:0; cursor:pointer;
+      border-radius:12px;
+      padding:9px 12px;
+      font-weight:800;
+      color:white;
+      background:var(--btn);
+    }
+    .small{font-size:12px;color:var(--muted)}
+    .status{
+      display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+      margin-top:10px;
+      color:var(--muted); font-size:12px;
+    }
+    .dot{
+      width:8px; height:8px; border-radius:50%;
+      background: var(--warn);
+      display:inline-block;
+    }
+    .dot.ok{background:var(--good)}
+    .dot.bad{background:var(--bad)}
   </style>
 </head>
 <body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="title">
+        <span>لوحة إدارة حسابات MT4</span>
+        <span class="subtitle" id="lastUpdatedText">—</span>
+      </div>
 
-<div class="row">
-  <h2 style="margin:0">لوحة إدارة حسابات MT4</h2>
-  <span class="muted" id="last"></span>
-</div>
+      <div class="controls">
+        <button class="btn" id="closeAllBtn">🔥 إغلاق كامل للجميع</button>
+        <input class="input" id="apiKeyInput" placeholder="API KEY (اختياري)" />
+        <button class="btn secondary" id="saveKeyBtn">حفظ</button>
+      </div>
+    </div>
 
-<div class="row">
-  <button class="danger" onclick="panicAll()">🔥 إغلاق كامل للجميع</button>
-  <input id="key" placeholder="API KEY (اختياري)" style="min-width:240px" />
-</div>
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:220px">Name</th>
+            <th style="width:130px">Equity</th>
+            <th style="width:130px">Balance</th>
+            <th style="width:140px">Profit</th>
+            <th style="width:110px">Orders</th>
+            <th style="width:130px">Last Update</th>
+            <th class="action-cell">Action</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="7" class="muted">جاري التحميل…</td></tr>
+        </tbody>
+      </table>
+    </div>
 
-<div class="card">
-  <table>
-    <thead>
-      <tr>
-        <th>AccountId</th>
-        <th>Name</th>
-        <th>Login</th>
-        <th>Equity</th>
-        <th>Balance</th>
-        <th>Margin</th>
-        <th>Free</th>
-        <th>Orders</th>
-        <th>Last Update</th>
-        <th>Action</th>
-      </tr>
-    </thead>
-    <tbody id="tbody"></tbody>
-  </table>
-</div>
+    <div class="status">
+      <span class="dot" id="dot"></span>
+      <span id="statusText">…</span>
+    </div>
+  </div>
 
 <script>
-function headers() {
-  const k = document.getElementById("key").value.trim();
-  const h = {};
-  if (k) h["x-api-key"] = k;
-  return h;
-}
+  // ====== Config ======
+  const REFRESH_MS = 2000;
 
-async function load() {
-  const r = await fetch("/api/accounts", { headers: headers() });
-  const data = await r.json();
-  if (!data.ok) return;
+  // endpoint المتوقع لقائمة الحسابات
+  // إذا كان عندك endpoint مختلف، غيّر هذا السطر فقط
+  const ACCOUNTS_ENDPOINT = "/accounts";
 
-  document.getElementById("last").textContent =
-    "آخر تحديث: " + new Date(data.now).toLocaleString();
+  // إغلاق كامل (متوافق مع أكثر من شكل)
+  const CLOSE_ALL_ENDPOINT = "/close-all"; // غالباً عندك
+  const CLOSE_ONE_ENDPOINT = "/close";     // fallback (لو موجود)
 
-  const tb = document.getElementById("tbody");
-  tb.innerHTML = "";
+  const els = {
+    tbody: document.getElementById("tbody"),
+    apiKey: document.getElementById("apiKeyInput"),
+    saveKey: document.getElementById("saveKeyBtn"),
+    closeAll: document.getElementById("closeAllBtn"),
+    status: document.getElementById("statusText"),
+    dot: document.getElementById("dot"),
+    lastUpdatedText: document.getElementById("lastUpdatedText"),
+  };
 
-  for (const a of data.accounts) {
-    const ageSec = Math.floor((Date.now() - a.ts) / 1000);
-    const alive = ageSec <= 10;
-
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${a.accountId}</td>
-      <td>${a.name || ""}</td>
-      <td>${a.login || ""}</td>
-      <td>${Number(a.equity).toFixed(2)}</td>
-      <td>${Number(a.balance).toFixed(2)}</td>
-      <td>${Number(a.margin).toFixed(2)}</td>
-      <td>${Number(a.free).toFixed(2)}</td>
-      <td>${(a.orders||[]).length}</td>
-      <td class="${alive ? "ok":"bad"}">${ageSec}s</td>
-      <td><button class="danger" onclick="panicOne('${a.accountId}')">Close All</button></td>
-    `;
-    tb.appendChild(tr);
+  function getApiKey(){
+    return (localStorage.getItem("API_KEY") || "").trim();
   }
-}
+  function setApiKey(v){
+    localStorage.setItem("API_KEY", (v || "").trim());
+  }
 
-async function panicOne(accountId){
-  if(!confirm("تأكيد: إغلاق كامل للحساب "+accountId+" ؟")) return;
-  await fetch("/api/panic", {
-    method:"POST",
-    headers: { "Content-Type":"application/json", ...headers() },
-    body: JSON.stringify({ accountId })
+  function headers(){
+    const h = { "Content-Type":"application/json" };
+    const key = getApiKey();
+    if(key) h["x-api-key"] = key;
+    return h;
+  }
+
+  function fmt2(x){
+    const n = Number(x);
+    if(!isFinite(n)) return "0.00";
+    return n.toFixed(2);
+  }
+
+  function agoSeconds(ts){
+    const t = Number(ts);
+    if(!t) return null;
+    return Math.floor((Date.now() - t)/1000);
+  }
+
+  function setStatus(ok, text){
+    els.status.textContent = text;
+    els.dot.classList.remove("ok","bad");
+    els.dot.classList.add(ok ? "ok":"bad");
+  }
+
+  async function fetchJSON(url, opts={}){
+    const res = await fetch(url, opts);
+    const text = await res.text();
+    // حماية لو السيرفر رجّع شيء غير JSON
+    try{
+      return JSON.parse(text);
+    }catch(e){
+      throw new Error("Bad JSON from " + url + " | " + text.slice(0,120));
+    }
+  }
+
+  // ====== Render table ======
+  function renderAccounts(list){
+    if(!Array.isArray(list) || list.length === 0){
+      els.tbody.innerHTML = `<tr><td colspan="7" class="muted">لا توجد حسابات حالياً.</td></tr>`;
+      return;
+    }
+
+    const rows = list.map(acc => {
+      // مرونة مع اختلاف أسماء الحقول من السيرفر/Agent
+      const name    = acc.name ?? acc.Name ?? acc.accountName ?? "—";
+      const equity  = Number(acc.equity ?? acc.Equity ?? 0);
+      const balance = Number(acc.balance ?? acc.Balance ?? 0);
+      const orders  = Number(acc.orders ?? acc.Orders ?? acc.openOrders ?? 0);
+
+      // Profit: لو السيرفر يرسل profit استخدمه، وإلا احسبه من Equity-Balance
+      let profit = acc.profit ?? acc.Profit ?? acc.pnl ?? acc.PnL;
+      profit = (profit === undefined || profit === null) ? (equity - balance) : Number(profit);
+
+      const profitClass = profit >= 0 ? "good" : "bad";
+      const profitText  = (profit >= 0 ? "+" : "") + fmt2(profit);
+
+      // lastUpdate يمكن يكون timestamp ms أو ISO أو seconds
+      let lastTs = acc.ts ?? acc.lastUpdate ?? acc.last_update ?? acc.updatedAt ?? acc.updated_at ?? 0;
+      if(typeof lastTs === "string"){
+        const parsed = Date.parse(lastTs);
+        lastTs = isFinite(parsed) ? parsed : 0;
+      }
+      const sAgo = agoSeconds(lastTs);
+
+      const lastUpdateCell = (sAgo === null)
+        ? `<span class="muted">—</span>`
+        : `<span class="${sAgo <= 5 ? "good" : (sAgo <= 30 ? "muted" : "bad")}">${sAgo > 0 ? "-" + sAgo + "s" : "now"}</span>`;
+
+      // accountId: نخليه داخلي فقط للتنفيذ (ما نعرضه)
+      const accountId = acc.accountId ?? acc.AccountId ?? acc.id ?? acc.agentId ?? acc.agent_id ?? "";
+
+      return `
+        <tr>
+          <td>${escapeHtml(String(name))}</td>
+          <td><span class="pill">${fmt2(equity)}</span></td>
+          <td><span class="pill">${fmt2(balance)}</span></td>
+          <td><span class="pill ${profitClass}">${profitText}</span></td>
+          <td><span class="pill">${isFinite(orders)?orders:0}</span></td>
+          <td>${lastUpdateCell}</td>
+          <td class="action-cell">
+            <button class="rowbtn" onclick="closeOne('${encodeURIComponent(String(accountId))}')">Close All</button>
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+    els.tbody.innerHTML = rows;
+  }
+
+  function escapeHtml(s){
+    return s.replace(/[&<>"']/g, m => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"
+    }[m]));
+  }
+
+  // ====== Actions ======
+  async function closeAll(){
+    // جرّب أكثر من شكل عشان ما نكسر اللي عندك
+    const payload = { action:"CLOSE_ALL", all:true };
+
+    // 1) POST /close-all
+    try{
+      await fetchJSON(CLOSE_ALL_ENDPOINT, { method:"POST", headers: headers(), body: JSON.stringify(payload) });
+      return true;
+    }catch(e){}
+
+    // 2) POST /close  (fallback)
+    try{
+      await fetchJSON(CLOSE_ONE_ENDPOINT, { method:"POST", headers: headers(), body: JSON.stringify(payload) });
+      return true;
+    }catch(e){}
+
+    alert("تعذر تنفيذ Close All — تأكد من endpoint في السيرفر.");
+    return false;
+  }
+
+  async function closeOne(accountId){
+    const id = decodeURIComponent(accountId || "");
+    if(!id){
+      alert("accountId غير موجود من السيرفر.");
+      return;
+    }
+
+    const payload = { action:"CLOSE_ALL", accountId: id };
+
+    // 1) POST /close-all مع accountId
+    try{
+      await fetchJSON(CLOSE_ALL_ENDPOINT, { method:"POST", headers: headers(), body: JSON.stringify(payload) });
+      return true;
+    }catch(e){}
+
+    // 2) POST /close (fallback)
+    try{
+      await fetchJSON(CLOSE_ONE_ENDPOINT, { method:"POST", headers: headers(), body: JSON.stringify(payload) });
+      return true;
+    }catch(e){}
+
+    alert("تعذر إغلاق حساب واحد — راجع endpoint بالسيرفر.");
+    return false;
+  }
+
+  // expose to window for onclick
+  window.closeOne = closeOne;
+
+  // ====== Polling ======
+  let lastOkAt = 0;
+
+  async function tick(){
+    try{
+      const data = await fetchJSON(ACCOUNTS_ENDPOINT, { headers: headers() });
+
+      // مرونة: ممكن يرجع {accounts:[...]} أو مباشرة [...]
+      const list = Array.isArray(data) ? data : (data.accounts || data.items || data.data || []);
+      renderAccounts(list);
+
+      lastOkAt = Date.now();
+      setStatus(true, "متصل");
+      els.lastUpdatedText.textContent = new Date().toLocaleString("ar", { hour12: true });
+
+    }catch(err){
+      setStatus(false, "خطأ اتصال/JSON: " + err.message);
+      // لا تمسح الجدول، خلّه آخر شيء ظاهر
+    }
+  }
+
+  // ====== Init ======
+  els.apiKey.value = getApiKey();
+  els.saveKey.addEventListener("click", () => {
+    setApiKey(els.apiKey.value);
+    alert("تم حفظ API KEY");
   });
-  alert("تم إرسال أمر الإغلاق للحساب: "+accountId);
-}
 
-async function panicAll(){
-  if(!confirm("تأكيد: إغلاق كامل لجميع الحسابات؟")) return;
-  await fetch("/api/panic", {
-    method:"POST",
-    headers: { "Content-Type":"application/json", ...headers() },
-    body: JSON.stringify({ accountId: "ALL" })
+  els.closeAll.addEventListener("click", async () => {
+    if(!confirm("متأكد تبي إغلاق جميع الصفقات على كل الحسابات؟")) return;
+    await closeAll();
+    // تحديث سريع بعد الأمر
+    setTimeout(tick, 500);
   });
-  alert("تم إرسال أمر الإغلاق للجميع");
-}
 
-setInterval(load, 2000);
-load();
+  tick();
+  setInterval(tick, REFRESH_MS);
 </script>
-
 </body>
 </html>
