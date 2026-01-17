@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="ar">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MT4 Accounts Dashboard</title>
+  <style>
+    body{font-family:Arial;background:#0f1115;color:#e8e8e8;margin:16px}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+    button{padding:10px 12px;border:0;border-radius:10px;cursor:pointer}
+    .danger{background:#ff3b30;color:#fff}
+    .card{background:#161a22;border:1px solid #2a3140;border-radius:14px;padding:12px;margin:10px 0}
+    table{width:100%;border-collapse:collapse}
+    th,td{border-bottom:1px solid #2a3140;padding:8px;text-align:center;font-size:14px}
+    th{color:#b8c0d6}
+    .muted{color:#98a2b3}
+    .ok{color:#4ade80}
+    .bad{color:#fb7185}
+    input{padding:10px;border-radius:10px;border:1px solid #2a3140;background:#0f1115;color:#e8e8e8}
+  </style>
+</head>
+<body>
+
+<div class="row">
+  <h2 style="margin:0">لوحة إدارة حسابات MT4</h2>
+  <span class="muted" id="last"></span>
+</div>
+
+<div class="row">
+  <button class="danger" onclick="panicAll()">🔥 إغلاق كامل للجميع</button>
+  <input id="key" placeholder="API KEY (اختياري)" style="min-width:240px" />
+</div>
+
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th>AccountId</th>
+        <th>Name</th>
+        <th>Login</th>
+        <th>Equity</th>
+        <th>Balance</th>
+        <th>Margin</th>
+        <th>Free</th>
+        <th>Orders</th>
+        <th>Last Update</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<script>
+function headers() {
+  const k = document.getElementById("key").value.trim();
+  const h = {};
+  if (k) h["x-api-key"] = k;
+  return h;
+}
+
+async function load() {
+  const r = await fetch("/api/accounts", { headers: headers() });
+  const data = await r.json();
+  if (!data.ok) return;
+
+  document.getElementById("last").textContent =
+    "آخر تحديث: " + new Date(data.now).toLocaleString();
+
+  const tb = document.getElementById("tbody");
+  tb.innerHTML = "";
+
+  for (const a of data.accounts) {
+    const ageSec = Math.floor((Date.now() - a.ts) / 1000);
+    const alive = ageSec <= 10;
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${a.accountId}</td>
+      <td>${a.name || ""}</td>
+      <td>${a.login || ""}</td>
+      <td>${Number(a.equity).toFixed(2)}</td>
+      <td>${Number(a.balance).toFixed(2)}</td>
+      <td>${Number(a.margin).toFixed(2)}</td>
+      <td>${Number(a.free).toFixed(2)}</td>
+      <td>${(a.orders||[]).length}</td>
+      <td class="${alive ? "ok":"bad"}">${ageSec}s</td>
+      <td><button class="danger" onclick="panicOne('${a.accountId}')">Close All</button></td>
+    `;
+    tb.appendChild(tr);
+  }
+}
+
+async function panicOne(accountId){
+  if(!confirm("تأكيد: إغلاق كامل للحساب "+accountId+" ؟")) return;
+  await fetch("/api/panic", {
+    method:"POST",
+    headers: { "Content-Type":"application/json", ...headers() },
+    body: JSON.stringify({ accountId })
+  });
+  alert("تم إرسال أمر الإغلاق للحساب: "+accountId);
+}
+
+async function panicAll(){
+  if(!confirm("تأكيد: إغلاق كامل لجميع الحسابات؟")) return;
+  await fetch("/api/panic", {
+    method:"POST",
+    headers: { "Content-Type":"application/json", ...headers() },
+    body: JSON.stringify({ accountId: "ALL" })
+  });
+  alert("تم إرسال أمر الإغلاق للجميع");
+}
+
+setInterval(load, 2000);
+load();
+</script>
+
+</body>
+</html>
