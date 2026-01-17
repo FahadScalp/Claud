@@ -169,7 +169,45 @@
 
   // endpoint المتوقع لقائمة الحسابات
   // إذا كان عندك endpoint مختلف، غيّر هذا السطر فقط
-  const ACCOUNTS_ENDPOINT = "/accounts";
+  const ACCOUNTS_CANDIDATES = [
+  "/accounts",
+  "/agents",
+  "/status",
+  "/state",
+  "/dashboard",
+  "/data",
+  "/list",
+  "/api/accounts",
+  "/api/agents",
+  "/api/status"
+];
+
+let ACCOUNTS_ENDPOINT = "";
+
+async function detectAccountsEndpoint(){
+  for(const ep of ACCOUNTS_CANDIDATES){
+    try{
+      const r = await fetch(ep, { headers: headers() });
+      const ct = (r.headers.get("content-type") || "").toLowerCase();
+      const txt = await r.text();
+
+      // لازم يكون JSON
+      if(!ct.includes("application/json")) continue;
+
+      const js = JSON.parse(txt);
+
+      // نقبل إذا رجع array أو object فيه accounts/agents/items/data
+      const list = Array.isArray(js) ? js : (js.accounts || js.agents || js.items || js.data);
+      if(Array.isArray(list)){
+        ACCOUNTS_ENDPOINT = ep;
+        setStatus(true, "تم العثور على endpoint: " + ep);
+        return true;
+      }
+    }catch(e){}
+  }
+  return false;
+}
+
 
   // إغلاق كامل (متوافق مع أكثر من شكل)
   const CLOSE_ALL_ENDPOINT = "/close-all"; // غالباً عندك
@@ -372,8 +410,16 @@
     setTimeout(tick, 500);
   });
 
+  (async () => {
+  const ok = await detectAccountsEndpoint();
+  if(!ok){
+    setStatus(false, "لم أجد endpoint يعرض الحسابات (JSON). راجع server.js endpoints.");
+    return;
+  }
   tick();
   setInterval(tick, REFRESH_MS);
+})();
+
 </script>
 </body>
 </html>
