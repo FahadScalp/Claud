@@ -6,49 +6,31 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
-// ===== In-memory event store (MVP) =====
 let nextEventId = 1;
-const events = []; // {event_id, group, type, master_ticket, symbol, cmd, lot, price, ts}
+const events = [];
 const MAX_EVENTS = 20000;
 
-// Optional simple API key
 const API_KEY = process.env.API_KEY || "";
 
-// ===== ACK store (per slave) =====
-// key: `${group}|${slaveId}` => lastAckEventId
+// ACK per slave: `${group}|${slaveId}` -> lastAckEventId
 const lastAckBySlave = new Map();
 
-// ===== De-dup store for master pushes =====
-// key: `${group}|${type}|${master_ticket}|${symbol}|${cmd}` => lastSeenTs
-// reduces duplicate events if master sends same OPEN/CLOSE repeatedly
-const dedup = new Map();
-const DEDUP_TTL_MS = 30 * 1000; // 30 seconds
+// HARD idempotency per master_ticket: `${group}|${master_ticket}` -> { open:bool, lastType, ts }
+const ticketState = new Map();
 
-function nowMs() {
-  return Date.now();
-}
-
+function nowMs() { return Date.now(); }
 function authOk(req) {
   if (!API_KEY) return true;
   return req.get("x-api-key") === API_KEY;
 }
 
-function cleanDedup() {
-  const t = nowMs();
-  // lightweight cleanup: remove old keys occasionally
-  // (called only when pushing)
-  for (const [k, ts] of dedup.entries()) {
-    if (t - ts > DEDUP_TTL_MS) dedup.delete(k);
-  }
-}
-
-// Health
 app.get("/health", (req, res) =>
   res.json({
     ok: true,
     now: nowMs(),
     events: events.length,
     slaves: lastAckBySlave.size,
+    tickets: ticketState.size,
   })
 );
 
@@ -57,39 +39,63 @@ app.post("/push", (req, res) => {
   if (!authOk(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
 
   const e = req.body || {};
-
   const group = String(e.group || "G1");
   const type = String(e.type || "");
   if (type !== "OPEN" && type !== "CLOSE") {
     return res.status(400).json({ ok: false, error: "type must be OPEN/CLOSE" });
   }
 
+  const master_ticket = Number(e.master_ticket || 0);
+  const symbol = String(e.symbol || "");
+  const cmd = Number(e.cmd ?? -1);
+  const lot = Number(e.lot || 0);
+  const price = Number(e.price || 0);
+
+  if (!master_ticket || !symbol || cmd < 0) {
+    return res.status(400).json({ ok: false, error: "missing fields" });
+  }
+
+  const tkey = `${group}|${master_ticket}`;
+  const st = ticketState.get(tkey) || { open: false, lastType: "", ts: 0 };
+
+  // ===== HARD anti-duplicate logic =====
+  if (type === "OPEN") {
+    if (st.open === true) {
+      // already opened, ignore duplicate OPEN
+      return res.json({ ok: true, duplicated: true, reason: "OPEN_ALREADY" });
+    }
+    // accept OPEN
+    st.open = true;
+    st.lastType = "OPEN";
+    st.ts = nowMs();
+    ticketState.set(tkey, st);
+  } else { // CLOSE
+    if (st.open === false) {
+      // CLOSE without OPEN: ignore (or accept if you want)
+      return res.json({ ok: true, duplicated: true, reason: "CLOSE_WITHOUT_OPEN" });
+    }
+    if (st.lastType === "CLOSE") {
+      // duplicate CLOSE
+      return res.json({ ok: true, duplicated: true, reason: "CLOSE_ALREADY" });
+    }
+    // accept CLOSE
+    st.open = false;
+    st.lastType = "CLOSE";
+    st.ts = nowMs();
+    ticketState.set(tkey, st);
+  }
+
   const payload = {
     event_id: nextEventId++,
     group,
     type,
-    master_ticket: Number(e.master_ticket || 0),
-    symbol: String(e.symbol || ""),
-    cmd: Number(e.cmd ?? -1), // OP_BUY=0, OP_SELL=1
-    lot: Number(e.lot || 0),
-    price: Number(e.price || 0),
+    master_ticket,
+    symbol,
+    cmd,
+    lot,
+    price,
     ts: nowMs(),
   };
-
-  if (!payload.master_ticket || !payload.symbol || payload.cmd < 0) {
-    return res.status(400).json({ ok: false, error: "missing fields" });
-  }
-
-  // ===== De-dup to avoid repeated OPEN/CLOSE from master =====
-  // (does NOT replace ACK logic; just reduces noise)
-  cleanDedup();
-  const dk = `${payload.group}|${payload.type}|${payload.master_ticket}|${payload.symbol}|${payload.cmd}`;
-  const lastTs = dedup.get(dk) || 0;
-  if (payload.ts - lastTs <= DEDUP_TTL_MS) {
-    // treat as duplicate; return ok without creating new event
-    return res.json({ ok: true, duplicated: true });
-  }
-  dedup.set(dk, payload.ts);
 
   events.push(payload);
   if (events.length > MAX_EVENTS) events.splice(0, events.length - MAX_EVENTS);
@@ -97,7 +103,7 @@ app.post("/push", (req, res) => {
   res.json({ ok: true, event_id: payload.event_id });
 });
 
-// Slave ACK: tell server "I processed event_id (success or fail) so don't resend"
+// Slave ACK
 app.post("/ack", (req, res) => {
   if (!authOk(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
 
@@ -115,7 +121,7 @@ app.post("/ack", (req, res) => {
   res.json({ ok: true, group, slaveId, last_ack: lastAckBySlave.get(key) || 0 });
 });
 
-// Slave polls events since last_event_id (and not ACKed for that slave)
+// Slave polls events (filtered by ACK)
 app.get("/events", (req, res) => {
   if (!authOk(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
 
@@ -129,11 +135,11 @@ app.get("/events", (req, res) => {
 
   const out = [];
   for (let i = 0; i < events.length; i++) {
-    const e = events[i];
-    if (e.group !== group) continue;
-    if (e.event_id <= since) continue;
-    if (e.event_id <= lastAck) continue; // 👈 prevents resend after ACK
-    out.push(e);
+    const ev = events[i];
+    if (ev.group !== group) continue;
+    if (ev.event_id <= since) continue;
+    if (ev.event_id <= lastAck) continue;
+    out.push(ev);
     if (out.length >= limit) break;
   }
 
