@@ -47,6 +47,16 @@
       outline:none;
       min-width:240px;
     }
+    .miniInput{
+      width:110px;
+      background: rgba(255,255,255,.04);
+      border:1px solid var(--line);
+      color:var(--text);
+      padding:8px 10px;
+      border-radius:12px;
+      outline:none;
+      direction:ltr;
+    }
     .btn{
       border:0; cursor:pointer;
       border-radius:12px;
@@ -63,9 +73,9 @@
       border:1px solid var(--line);
       border-radius: var(--radius);
       box-shadow: var(--shadow);
-      overflow:hidden;
+      overflow-x:auto;
     }
-    table{width:100%;border-collapse:separate;border-spacing:0}
+    table{width:100%;border-collapse:separate;border-spacing:0; min-width:980px}
     thead th{
       text-align:right;
       font-size:13px;
@@ -151,41 +161,11 @@
       direction:ltr;
     }
 
-    /* ===== Mobile (iPhone) layout ===== */
+    /* Mobile: keep table + horizontal scroll (no repeated labels) */
     @media (max-width: 720px){
       .wrap{max-width: 100%; padding: 0 12px}
       .controls{width:100%}
       .input{min-width: 0; flex: 1}
-
-      thead{display:none}
-      table, tbody, tr, td { display: block; width:100% }
-      tbody tr{
-        border-bottom: 1px solid rgba(255,255,255,.06);
-        padding: 12px 12px;
-      }
-      tbody td{
-        border:0;
-        padding: 8px 0;
-      }
-
-      .mrow{
-        display:flex;
-        justify-content:space-between;
-        align-items:center;
-        gap:10px;
-        font-size:14px;
-      }
-      .mlabel{
-        color: var(--muted);
-        font-size:12px;
-        display:inline; /* تظهر فقط على الجوال */
-      }
-    }
-
-    /* ✅ على الديسكتوب أخفِ الـ Labels نهائيًا */
-    .mlabel{ display:none; }
-    @media (max-width: 720px){
-      .mlabel{ display:inline; }
     }
   </style>
 </head>
@@ -225,12 +205,14 @@
             <th style="width:140px">Balance</th>
             <th style="width:180px">Total Profit (Orders)</th>
             <th style="width:120px">Orders</th>
+            <th style="width:140px">TP$</th>
+            <th style="width:140px">SL$</th>
             <th style="width:140px">Last Update</th>
             <th class="action-cell">Action</th>
           </tr>
         </thead>
         <tbody id="tbody">
-          <tr><td colspan="7" class="muted">جاري التحميل…</td></tr>
+          <tr><td colspan="9" class="muted">جاري التحميل…</td></tr>
         </tbody>
       </table>
     </div>
@@ -387,7 +369,7 @@
   // ===== Render =====
   function renderAccounts(list){
     if(!Array.isArray(list) || list.length === 0){
-      els.tbody.innerHTML = `<tr><td colspan="7" class="muted">لا توجد حسابات حالياً.</td></tr>`;
+      els.tbody.innerHTML = `<tr><td colspan="9" class="muted">لا توجد حسابات حالياً.</td></tr>`;
       els.sumProfit.textContent = "0.00";
       els.sumOrders.textContent = "0";
       return;
@@ -418,14 +400,23 @@
 
       const accountId = acc.accountId ?? "";
 
+      const tpUsd = Number(acc.settings?.tpUsd ?? acc.tpUsd ?? 0);
+      const slUsd = Number(acc.settings?.slUsd ?? acc.slUsd ?? 0);
+
       return `
         <tr>
-          <td><div class="mrow"><span class="mlabel">Name</span><strong>${escapeHtml(name)}</strong></div></td>
-          <td><div class="mrow"><span class="mlabel">Equity</span><span class="pill">${fmt2(equity)}</span></div></td>
-          <td><div class="mrow"><span class="mlabel">Balance</span><span class="pill">${fmt2(balance)}</span></div></td>
-          <td><div class="mrow"><span class="mlabel">Profit</span><span class="pill ${profitClass}">${profitText}</span></div></td>
-          <td><div class="mrow"><span class="mlabel">Orders</span><span class="pill">${ordersCount}</span></div></td>
-          <td><div class="mrow"><span class="mlabel">Update</span>${lastUpdateCell}</div></td>
+          <td><strong>${escapeHtml(name)}</strong></td>
+          <td><span class="pill">${fmt2(equity)}</span></td>
+          <td><span class="pill">${fmt2(balance)}</span></td>
+          <td><span class="pill ${profitClass}">${profitText}</span></td>
+          <td><span class="pill">${ordersCount}</span></td>
+          <td>
+            <input class="miniInput" value="${fmt2(tpUsd)}" inputmode="decimal" onchange="saveSetting('${encodeURIComponent(accountId)}','tpUsd',this.value)" />
+          </td>
+          <td>
+            <input class="miniInput" value="${fmt2(slUsd)}" inputmode="decimal" onchange="saveSetting('${encodeURIComponent(accountId)}','slUsd',this.value)" />
+          </td>
+          <td>${lastUpdateCell}</td>
           <td class="action-cell">
             <button class="rowbtn" onclick="panicOne('${encodeURIComponent(accountId)}')">Close All</button>
           </td>
