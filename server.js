@@ -148,15 +148,28 @@ app.get("/settings", (req, res) => {
 
 // ---------------- Agent -> poll command ----------------
 app.get("/command", (req, res) => {
-  if (!authOk(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
+  if (!authOk(req)) return res.status(401).json({ ok: false });
 
-  const accountId = String(req.query.accountId || "").trim();
-  if (!accountId) return res.status(400).json({ ok: false, error: "missing accountId" });
+  const accountId = String(req.query.accountId || "");
+  if (!accountId) return res.json({ ok: true, has: false });
 
   const cmd = commands.get(accountId);
-  if (!cmd || cmd.status !== "NEW") return res.json({ ok: true, has: false });
-  return res.json({ ok: true, has: true, command: cmd });
+  if (!cmd || cmd.status !== "NEW") {
+    return res.json({ ok: true, has: false });
+  }
+
+  // 🔒 أرسل نسخة فقط
+  res.json({
+    ok: true,
+    has: true,
+    command: {
+      id: cmd.id,
+      type: cmd.type,
+      target: cmd.target
+    }
+  });
 });
+
 
 // ---------------- Agent -> ack command result ----------------
 app.post("/command_ack", (req, res) => {
@@ -175,7 +188,7 @@ app.post("/command_ack", (req, res) => {
     cmd.status = status; // DONE | ERR
     cmd.errMsg = errMsg;
     cmd.ackTs = nowMs();
-    commands.set(accountId, cmd);
+    commands.delete(accountId);
   }
 
   res.json({ ok: true });
