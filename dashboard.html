@@ -105,6 +105,7 @@
       font-weight:800;
       color:white;
       background:var(--btn);
+      width: 100%;
     }
     .status{
       display:flex; gap:10px; align-items:center; flex-wrap:wrap;
@@ -118,6 +119,37 @@
     }
     .dot.ok{background:var(--good)}
     .dot.bad{background:var(--bad)}
+
+    /* ===== Mobile (iPhone) layout ===== */
+    @media (max-width: 720px){
+      .wrap{max-width: 100%; padding: 0 12px}
+      .controls{width:100%}
+      .input{min-width: 0; flex: 1}
+
+      thead{display:none}
+
+      table, tbody, tr, td { display: block; width:100% }
+      tbody tr{
+        border-bottom: 1px solid rgba(255,255,255,.06);
+        padding: 12px 12px;
+      }
+      tbody td{
+        border:0;
+        padding: 8px 0;
+      }
+
+      .mrow{
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        gap:10px;
+        font-size:14px;
+      }
+      .mlabel{
+        color: var(--muted);
+        font-size:12px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -163,7 +195,7 @@
 <script>
   const REFRESH_MS = 2000;
 
-  // ✅ مضبوط على server.js حقك
+  // ✅ مطابق لـ server.js
   const ACCOUNTS_ENDPOINT = "/api/accounts";
   const PANIC_ENDPOINT    = "/api/panic";
 
@@ -200,7 +232,7 @@
   }
 
   function escapeHtml(s){
-    return s.replace(/[&<>"']/g, m => ({
+    return String(s).replace(/[&<>"']/g, m => ({
       "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"
     }[m]));
   }
@@ -220,11 +252,9 @@
 
   // ===== Profit calc from orders[] =====
   function orderProfit(o){
-    // مرونة كبيرة لأن Agent ممكن يسميها بطرق مختلفة
     const v = (o && (o.profit ?? o.Profit ?? o.pnl ?? o.PnL ?? o.pl ?? o.PL));
     const n = Number(v);
-    if(isFinite(n)) return n;
-    return 0;
+    return isFinite(n) ? n : 0;
   }
 
   function calcOrdersProfit(orders){
@@ -242,41 +272,55 @@
     }
 
     const rows = list.map(acc => {
-      const name    = acc.name || "—";
-      const equity  = Number(acc.equity || 0);
-      const balance = Number(acc.balance || 0);
+      const name    = acc.name ?? "—";
+      const equity  = Number(acc.equity ?? 0);
+      const balance = Number(acc.balance ?? 0);
+
       const ordersArr = Array.isArray(acc.orders) ? acc.orders : [];
       const ordersCount = ordersArr.length;
 
-      // ✅ الربح المطلوب: مجموع أرباح الصفقات (لو متوفر)
-      // fallback: equity-balance
+      // ✅ الربح: مجموع أرباح الصفقات (من orders[]). إذا الصفقات ما فيها profit استخدم fallback.
       let totalProfit = calcOrdersProfit(ordersArr);
+
       if(ordersCount === 0){
-        totalProfit = 0; // لا صفقات = لا ربح عائم
+        totalProfit = 0;
       } else if(totalProfit === 0){
-        // لو Agent ما يرسل profit داخل orders، خلي fallback
+        // fallback لو Agent ما يرسل profit داخل orders
         totalProfit = equity - balance;
       }
 
       const profitClass = totalProfit >= 0 ? "good" : "bad";
       const profitText  = (totalProfit >= 0 ? "+" : "") + fmt2(totalProfit);
 
-      let lastTs = acc.ts || 0;
+      const lastTs = acc.ts ?? 0;
       const sAgo = agoSeconds(lastTs);
       const lastUpdateCell = (sAgo === null)
         ? `<span class="muted">—</span>`
         : `<span class="${sAgo <= 5 ? "good" : (sAgo <= 30 ? "muted" : "bad")}">${sAgo > 0 ? "-" + sAgo + "s" : "now"}</span>`;
 
-      const accountId = acc.accountId || "";
+      const accountId = acc.accountId ?? "";
 
+      // ✅ Table layout (Desktop) + Card layout (Mobile) بنفس HTML (CSS يضبطها)
       return `
         <tr>
-          <td>${escapeHtml(String(name))}</td>
-          <td><span class="pill">${fmt2(equity)}</span></td>
-          <td><span class="pill">${fmt2(balance)}</span></td>
-          <td><span class="pill ${profitClass}">${profitText}</span></td>
-          <td><span class="pill">${ordersCount}</span></td>
-          <td>${lastUpdateCell}</td>
+          <td>
+            <div class="mrow"><span class="mlabel">Name</span><strong>${escapeHtml(name)}</strong></div>
+          </td>
+          <td>
+            <div class="mrow"><span class="mlabel">Equity</span><span class="pill">${fmt2(equity)}</span></div>
+          </td>
+          <td>
+            <div class="mrow"><span class="mlabel">Balance</span><span class="pill">${fmt2(balance)}</span></div>
+          </td>
+          <td>
+            <div class="mrow"><span class="mlabel">Profit</span><span class="pill ${profitClass}">${profitText}</span></div>
+          </td>
+          <td>
+            <div class="mrow"><span class="mlabel">Orders</span><span class="pill">${ordersCount}</span></div>
+          </td>
+          <td>
+            <div class="mrow"><span class="mlabel">Update</span>${lastUpdateCell}</div>
+          </td>
           <td class="action-cell">
             <button class="rowbtn" onclick="panicOne('${encodeURIComponent(accountId)}')">Close All</button>
           </td>
@@ -289,7 +333,6 @@
 
   // ===== Actions (✅ server.js: /api/panic) =====
   async function panicAll(){
-    // إصدار للجميع: accountId="ALL"
     return fetchJSON(PANIC_ENDPOINT, {
       method:"POST",
       headers: headers(),
@@ -313,7 +356,7 @@
   window.panicOne = async (id) => {
     try{
       await panicOne(id);
-      setTimeout(tick, 600);
+      setTimeout(tick, 700);
     }catch(e){
       alert("فشل الإغلاق: " + e.message);
     }
@@ -323,9 +366,7 @@
   async function tick(){
     try{
       const data = await fetchJSON(ACCOUNTS_ENDPOINT, { headers: headers() });
-
-      // ✅ يرجع {ok, now, accounts:[...]}
-      const list = data && data.accounts ? data.accounts : [];
+      const list = (data && data.accounts) ? data.accounts : [];
       renderAccounts(list);
 
       setStatus(true, "متصل");
@@ -346,7 +387,7 @@
     if(!confirm("متأكد تبي إغلاق جميع الصفقات على كل الحسابات؟")) return;
     try{
       await panicAll();
-      setTimeout(tick, 600);
+      setTimeout(tick, 700);
     }catch(e){
       alert("فشل الإغلاق للجميع: " + e.message);
     }
