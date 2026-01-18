@@ -4,6 +4,10 @@
 import express from "express";
 import cors from "cors";
 
+// NOTE: this file is an ES module on Render ("type":"module")
+import path from "path";
+import { fileURLToPath } from "url";
+
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
@@ -25,6 +29,10 @@ const commands = new Map();
 // accountId -> { id, type:"PANIC_CLOSE", target:"ALL", ts, status:"NEW|DONE|ERR", errMsg }
 
 let nextCmdId = 1;
+
+// For Render + ES modules: resolve current directory
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // ===== Health =====
 app.get("/health", (req, res) => {
@@ -108,7 +116,8 @@ app.post("/command_ack", (req, res) => {
 app.get("/api/accounts", (req, res) => {
   if (!authOk(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
 
-  const out = Array.from(accounts.values()).sort((a, b) => (b.ts - a.ts));
+  // Keep a stable order (Map preserves insertion order)
+  const out = Array.from(accounts.values());
   res.json({ ok: true, now: nowMs(), accounts: out });
 });
 
@@ -123,6 +132,9 @@ app.post("/api/panic", (req, res) => {
   if (accountId === "ALL") {
     // issue to all known accounts
     for (const accId of accounts.keys()) {
+      const existing = commands.get(accId);
+      if (existing && existing.status === "NEW") continue; // don't spam same account
+
       commands.set(accId, {
         id: nextCmdId++,
         type: "PANIC_CLOSE",
@@ -137,6 +149,12 @@ app.post("/api/panic", (req, res) => {
 
   if (!accountId) return res.status(400).json({ ok: false, error: "missing accountId" });
 
+  // If a NEW command already exists for this account, don't overwrite it
+  const existing = commands.get(accountId);
+  if (existing && existing.status === "NEW") {
+    return res.json({ ok: true, issued: accountId, pending: true, id: existing.id });
+  }
+
   commands.set(accountId, {
     id: nextCmdId++,
     type: "PANIC_CLOSE",
@@ -150,7 +168,12 @@ app.post("/api/panic", (req, res) => {
 });
 
 // ===== Serve dashboard static =====
-app.use(express.static(".")); // serves dashboard.html from same folder
+// Put dashboard.html next to server.js in the repo root.
+app.use(express.static(__dirname));
+
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "dashboard.html"));
+});
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Account Manager listening on", port));
