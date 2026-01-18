@@ -7,11 +7,9 @@
   <style>
     :root{
       --bg:#0b0f14;
-      --card:#0f1620;
-      --card2:#101a26;
+      --line:#1e2a39;
       --text:#e6edf3;
       --muted:#8aa0b3;
-      --line:#1e2a39;
       --good:#22c55e;
       --bad:#ef4444;
       --warn:#f59e0b;
@@ -108,7 +106,6 @@
       color:white;
       background:var(--btn);
     }
-    .small{font-size:12px;color:var(--muted)}
     .status{
       display:flex; gap:10px; align-items:center; flex-wrap:wrap;
       margin-top:10px;
@@ -145,7 +142,7 @@
             <th style="width:220px">Name</th>
             <th style="width:140px">Equity</th>
             <th style="width:140px">Balance</th>
-            <th style="width:160px">Profit</th>
+            <th style="width:180px">Total Profit (Orders)</th>
             <th style="width:120px">Orders</th>
             <th style="width:140px">Last Update</th>
             <th class="action-cell">Action</th>
@@ -160,43 +157,15 @@
     <div class="status">
       <span class="dot" id="dot"></span>
       <span id="statusText">…</span>
-      <span class="small" id="endpointsText"></span>
     </div>
   </div>
 
 <script>
-  // ====== Config ======
   const REFRESH_MS = 2000;
 
-  // حسابات
-  const ACCOUNTS_CANDIDATES = [
-    "/accounts",
-    "/agents",
-    "/status",
-    "/state",
-    "/dashboard",
-    "/data",
-    "/list",
-    "/api/accounts",
-    "/api/agents",
-    "/api/status"
-  ];
-
-  // إغلاق (Auto-detect)
-  const CLOSE_CANDIDATES = [
-    "/close-all",
-    "/close_all",
-    "/closeAll",
-    "/close",
-    "/closeAllOrders",
-    "/api/close-all",
-    "/api/close_all",
-    "/api/closeAll",
-    "/api/close"
-  ];
-
-  let ACCOUNTS_ENDPOINT = "";
-  let CLOSE_ENDPOINT = "";
+  // ✅ مضبوط على server.js حقك
+  const ACCOUNTS_ENDPOINT = "/api/accounts";
+  const PANIC_ENDPOINT    = "/api/panic";
 
   const els = {
     tbody: document.getElementById("tbody"),
@@ -206,34 +175,16 @@
     status: document.getElementById("statusText"),
     dot: document.getElementById("dot"),
     lastUpdatedText: document.getElementById("lastUpdatedText"),
-    endpointsText: document.getElementById("endpointsText"),
   };
 
-  function getApiKey(){
-    return (localStorage.getItem("API_KEY") || "").trim();
-  }
-  function setApiKey(v){
-    localStorage.setItem("API_KEY", (v || "").trim());
-  }
+  function getApiKey(){ return (localStorage.getItem("API_KEY") || "").trim(); }
+  function setApiKey(v){ localStorage.setItem("API_KEY", (v || "").trim()); }
 
-  function headers(withJson=true){
-    const h = {};
-    if(withJson) h["Content-Type"]="application/json";
+  function headers(){
+    const h = { "Content-Type":"application/json" };
     const key = getApiKey();
     if(key) h["x-api-key"] = key;
     return h;
-  }
-
-  function fmt2(x){
-    const n = Number(x);
-    if(!isFinite(n)) return "0.00";
-    return n.toFixed(2);
-  }
-
-  function agoSeconds(ts){
-    const t = Number(ts);
-    if(!t) return null;
-    return Math.floor((Date.now() - t)/1000);
   }
 
   function setStatus(ok, text){
@@ -242,126 +193,10 @@
     els.dot.classList.add(ok ? "ok":"bad");
   }
 
-  function setEndpointsText(){
-    const a = ACCOUNTS_ENDPOINT ? ACCOUNTS_ENDPOINT : "—";
-    const c = CLOSE_ENDPOINT ? CLOSE_ENDPOINT : "—";
-    els.endpointsText.textContent = `Endpoints | accounts: ${a} | close: ${c}`;
-  }
-
-  async function fetchJSON(url, opts={}){
-    const res = await fetch(url, opts);
-    const text = await res.text();
-    try{
-      return JSON.parse(text);
-    }catch(e){
-      throw new Error("Bad JSON from " + url + " | " + text.slice(0,160));
-    }
-  }
-
-  async function detectAccountsEndpoint(){
-    for(const ep of ACCOUNTS_CANDIDATES){
-      try{
-        const r = await fetch(ep, { headers: headers(false) });
-        const ct = (r.headers.get("content-type") || "").toLowerCase();
-        const txt = await r.text();
-        if(!ct.includes("application/json")) continue;
-
-        const js = JSON.parse(txt);
-        const list = Array.isArray(js) ? js : (js.accounts || js.agents || js.items || js.data);
-        if(Array.isArray(list)){
-          ACCOUNTS_ENDPOINT = ep;
-          return true;
-        }
-      }catch(e){}
-    }
-    return false;
-  }
-
-  async function detectCloseEndpoint(){
-    for(const ep of CLOSE_CANDIDATES){
-      // نجرب GET أول (قد يرجع 404 أو HTML)
-      try{
-        const r = await fetch(ep, { method:"GET", headers: headers(false) });
-        if(r.status !== 404){
-          // ليس شرط JSON، المهم مو 404
-          CLOSE_ENDPOINT = ep;
-          return true;
-        }
-      }catch(e){}
-
-      // نجرب POST ب Body "PING" (سيرفرات كثيرة ترجع 400 بدل 404 إذا موجود)
-      try{
-        const r = await fetch(ep, { method:"POST", headers: headers(true), body: JSON.stringify({ ping:true }) });
-        if(r.status !== 404){
-          CLOSE_ENDPOINT = ep;
-          return true;
-        }
-      }catch(e){}
-    }
-    return false;
-  }
-
-  // ====== Render table ======
-  function renderAccounts(list){
-    if(!Array.isArray(list) || list.length === 0){
-      els.tbody.innerHTML = `<tr><td colspan="7" class="muted">لا توجد حسابات حالياً.</td></tr>`;
-      return;
-    }
-
-    const rows = list.map(acc => {
-      const name    = acc.name ?? acc.Name ?? acc.accountName ?? "—";
-      const equity  = Number(acc.equity ?? acc.Equity ?? 0);
-      const balance = Number(acc.balance ?? acc.Balance ?? 0);
-
-      // ===== Orders: قوي جدًا ضد اختلافات السيرفر =====
-      const orders =
-        Number(acc.ordersOpen ?? acc.open_orders ?? acc.openOrders ?? acc.orders ?? acc.trades ?? acc.positionsCount ?? acc.openCount ?? acc.totalOrders ?? 0) ||
-        (Array.isArray(acc.positions) ? acc.positions.length : 0) ||
-        (Array.isArray(acc.trades_list) ? acc.trades_list.length : 0) ||
-        (Array.isArray(acc.orders_list) ? acc.orders_list.length : 0) ||
-        (Array.isArray(acc.orders) ? acc.orders.length : 0) ||
-        (Array.isArray(acc.trades) ? acc.trades.length : 0);
-
-      // Profit: لو السيرفر يرسل profit استخدمه، وإلا احسبه
-      let profit = acc.profit ?? acc.Profit ?? acc.pnl ?? acc.PnL;
-      profit = (profit === undefined || profit === null) ? (equity - balance) : Number(profit);
-
-      const profitClass = profit >= 0 ? "good" : "bad";
-      const profitText  = (profit >= 0 ? "+" : "") + fmt2(profit);
-
-      // lastUpdate
-      let lastTs = acc.ts ?? acc.lastUpdate ?? acc.last_update ?? acc.updatedAt ?? acc.updated_at ?? 0;
-      if(typeof lastTs === "string"){
-        const parsed = Date.parse(lastTs);
-        lastTs = isFinite(parsed) ? parsed : 0;
-      }
-      const sAgo = agoSeconds(lastTs);
-
-      const lastUpdateCell = (sAgo === null)
-        ? `<span class="muted">—</span>`
-        : `<span class="${sAgo <= 5 ? "good" : (sAgo <= 30 ? "muted" : "bad")}">${sAgo > 0 ? "-" + sAgo + "s" : "now"}</span>`;
-
-      // معرفات ممكنة للإغلاق
-      const accountId = acc.accountId ?? acc.AccountId ?? acc.id ?? acc.agentId ?? acc.agent_id ?? "";
-      const login     = acc.login ?? acc.Login ?? acc.accountLogin ?? "";
-      const idForUi   = encodeURIComponent(String(accountId || login || name || ""));
-
-      return `
-        <tr>
-          <td>${escapeHtml(String(name))}</td>
-          <td><span class="pill">${fmt2(equity)}</span></td>
-          <td><span class="pill">${fmt2(balance)}</span></td>
-          <td><span class="pill ${profitClass}">${profitText}</span></td>
-          <td><span class="pill">${isFinite(orders)?orders:0}</span></td>
-          <td>${lastUpdateCell}</td>
-          <td class="action-cell">
-            <button class="rowbtn" onclick="closeOne('${idForUi}')">Close All</button>
-          </td>
-        </tr>
-      `;
-    }).join("");
-
-    els.tbody.innerHTML = rows;
+  function fmt2(x){
+    const n = Number(x);
+    if(!isFinite(n)) return "0.00";
+    return n.toFixed(2);
   }
 
   function escapeHtml(s){
@@ -370,79 +205,127 @@
     }[m]));
   }
 
-  // ====== Actions ======
-  async function postClose(payload){
-    if(!CLOSE_ENDPOINT){
-      alert("تأكد من endpoints: لا يوجد Close endpoint");
-      return false;
+  function agoSeconds(ts){
+    const t = Number(ts);
+    if(!t) return null;
+    return Math.floor((Date.now() - t)/1000);
+  }
+
+  async function fetchJSON(url, opts={}){
+    const res = await fetch(url, opts);
+    const text = await res.text();
+    try{ return JSON.parse(text); }
+    catch(e){ throw new Error("Bad JSON from " + url + " | " + text.slice(0,160)); }
+  }
+
+  // ===== Profit calc from orders[] =====
+  function orderProfit(o){
+    // مرونة كبيرة لأن Agent ممكن يسميها بطرق مختلفة
+    const v = (o && (o.profit ?? o.Profit ?? o.pnl ?? o.PnL ?? o.pl ?? o.PL));
+    const n = Number(v);
+    if(isFinite(n)) return n;
+    return 0;
+  }
+
+  function calcOrdersProfit(orders){
+    if(!Array.isArray(orders) || orders.length===0) return 0;
+    let s = 0;
+    for(const o of orders) s += orderProfit(o);
+    return s;
+  }
+
+  // ===== Render =====
+  function renderAccounts(list){
+    if(!Array.isArray(list) || list.length === 0){
+      els.tbody.innerHTML = `<tr><td colspan="7" class="muted">لا توجد حسابات حالياً.</td></tr>`;
+      return;
     }
-    // جرّب الطلب
+
+    const rows = list.map(acc => {
+      const name    = acc.name || "—";
+      const equity  = Number(acc.equity || 0);
+      const balance = Number(acc.balance || 0);
+      const ordersArr = Array.isArray(acc.orders) ? acc.orders : [];
+      const ordersCount = ordersArr.length;
+
+      // ✅ الربح المطلوب: مجموع أرباح الصفقات (لو متوفر)
+      // fallback: equity-balance
+      let totalProfit = calcOrdersProfit(ordersArr);
+      if(ordersCount === 0){
+        totalProfit = 0; // لا صفقات = لا ربح عائم
+      } else if(totalProfit === 0){
+        // لو Agent ما يرسل profit داخل orders، خلي fallback
+        totalProfit = equity - balance;
+      }
+
+      const profitClass = totalProfit >= 0 ? "good" : "bad";
+      const profitText  = (totalProfit >= 0 ? "+" : "") + fmt2(totalProfit);
+
+      let lastTs = acc.ts || 0;
+      const sAgo = agoSeconds(lastTs);
+      const lastUpdateCell = (sAgo === null)
+        ? `<span class="muted">—</span>`
+        : `<span class="${sAgo <= 5 ? "good" : (sAgo <= 30 ? "muted" : "bad")}">${sAgo > 0 ? "-" + sAgo + "s" : "now"}</span>`;
+
+      const accountId = acc.accountId || "";
+
+      return `
+        <tr>
+          <td>${escapeHtml(String(name))}</td>
+          <td><span class="pill">${fmt2(equity)}</span></td>
+          <td><span class="pill">${fmt2(balance)}</span></td>
+          <td><span class="pill ${profitClass}">${profitText}</span></td>
+          <td><span class="pill">${ordersCount}</span></td>
+          <td>${lastUpdateCell}</td>
+          <td class="action-cell">
+            <button class="rowbtn" onclick="panicOne('${encodeURIComponent(accountId)}')">Close All</button>
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+    els.tbody.innerHTML = rows;
+  }
+
+  // ===== Actions (✅ server.js: /api/panic) =====
+  async function panicAll(){
+    // إصدار للجميع: accountId="ALL"
+    return fetchJSON(PANIC_ENDPOINT, {
+      method:"POST",
+      headers: headers(),
+      body: JSON.stringify({ accountId:"ALL", target:"ALL" })
+    });
+  }
+
+  async function panicOne(accountIdEnc){
+    const accountId = decodeURIComponent(accountIdEnc || "");
+    if(!accountId){
+      alert("accountId غير موجود من السيرفر.");
+      return;
+    }
+    return fetchJSON(PANIC_ENDPOINT, {
+      method:"POST",
+      headers: headers(),
+      body: JSON.stringify({ accountId, target:"ALL" })
+    });
+  }
+
+  window.panicOne = async (id) => {
     try{
-      const r = await fetch(CLOSE_ENDPOINT, {
-        method:"POST",
-        headers: headers(true),
-        body: JSON.stringify(payload)
-      });
-      if(r.ok) return true;
-      // حتى لو مو ok، احتمال يرجع JSON يشرح
-      return false;
+      await panicOne(id);
+      setTimeout(tick, 600);
     }catch(e){
-      return false;
+      alert("فشل الإغلاق: " + e.message);
     }
-  }
+  };
 
-  async function closeAll(){
-    // جرّب عدة أشكال لأن السيرفر/Agent تختلف
-    const payloads = [
-      { action:"CLOSE_ALL", all:true },
-      { cmd:"CLOSE_ALL", all:true },
-      { type:"CLOSE_ALL", all:true },
-      { closeAll:true },
-      { all:true }
-    ];
-
-    for(const p of payloads){
-      const ok = await postClose(p);
-      if(ok) return true;
-    }
-    alert("تعذر تنفيذ Close All — تأكد من endpoint في السيرفر أو شكل الـ payload.");
-    return false;
-  }
-
-  async function closeOne(idOrLoginOrName){
-    const v = decodeURIComponent(idOrLoginOrName || "");
-    if(!v){
-      alert("لا يوجد معرف للحساب من السيرفر.");
-      return false;
-    }
-
-    const payloads = [
-      { action:"CLOSE_ALL", accountId: v },
-      { action:"CLOSE_ALL", login: v },
-      { action:"CLOSE_ALL", id: v },
-      { action:"CLOSE_ALL", name: v },
-      { accountId: v, closeAll:true },
-      { login: v, closeAll:true },
-      { id: v, closeAll:true },
-      { name: v, closeAll:true }
-    ];
-
-    for(const p of payloads){
-      const ok = await postClose(p);
-      if(ok) return true;
-    }
-
-    alert("تعذر إغلاق الحساب — تأكد من endpoints/الحقول المطلوبة في السيرفر.");
-    return false;
-  }
-
-  window.closeOne = closeOne;
-
-  // ====== Polling ======
+  // ===== Polling =====
   async function tick(){
     try{
-      const data = await fetchJSON(ACCOUNTS_ENDPOINT, { headers: headers(false) });
-      const list = Array.isArray(data) ? data : (data.accounts || data.items || data.data || data.agents || []);
+      const data = await fetchJSON(ACCOUNTS_ENDPOINT, { headers: headers() });
+
+      // ✅ يرجع {ok, now, accounts:[...]}
+      const list = data && data.accounts ? data.accounts : [];
       renderAccounts(list);
 
       setStatus(true, "متصل");
@@ -452,7 +335,7 @@
     }
   }
 
-  // ====== Init ======
+  // ===== Init =====
   els.apiKey.value = getApiKey();
   els.saveKey.addEventListener("click", () => {
     setApiKey(els.apiKey.value);
@@ -461,30 +344,16 @@
 
   els.closeAll.addEventListener("click", async () => {
     if(!confirm("متأكد تبي إغلاق جميع الصفقات على كل الحسابات؟")) return;
-    const ok = await closeAll();
-    if(ok) setTimeout(tick, 600);
+    try{
+      await panicAll();
+      setTimeout(tick, 600);
+    }catch(e){
+      alert("فشل الإغلاق للجميع: " + e.message);
+    }
   });
 
-  (async () => {
-    const okA = await detectAccountsEndpoint();
-    if(!okA){
-      setStatus(false, "لم أجد endpoint يعرض الحسابات (JSON). راجع server.js endpoints.");
-      setEndpointsText();
-      return;
-    }
-
-    const okC = await detectCloseEndpoint();
-    if(!okC){
-      // نخلي الصفحة تشتغل لكن نحذر
-      setStatus(true, "متصل (تنبيه: لم أجد endpoint للإغلاق تلقائياً)");
-    }else{
-      setStatus(true, "متصل");
-    }
-
-    setEndpointsText();
-    await tick();
-    setInterval(tick, REFRESH_MS);
-  })();
+  tick();
+  setInterval(tick, REFRESH_MS);
 </script>
 </body>
 </html>
