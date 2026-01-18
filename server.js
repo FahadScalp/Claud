@@ -1,5 +1,5 @@
-// server.js - MT4 Account Manager (Dashboard + Per-Account Settings + Panic Close)
-// Deploy on Render (Node 18+). Works with package.json {"type":"module"}
+// server.js - MT4 Account Manager (Dashboard + Panic Close)
+// Run on Render
 
 import express from "express";
 import cors from "cors";
@@ -15,69 +15,18 @@ function authOk(req) {
   return req.get("x-api-key") === API_KEY;
 }
 
-function nowMs() {
-  return Date.now();
-}
+function nowMs() { return Date.now(); }
 
-// ---------------- In-memory stores ----------------
-// accountId -> last reported snapshot
-const accounts = new Map();
-// accountId -> last-seen order (stable ordering)
-const firstSeenOrder = new Map();
-let firstSeenSeq = 1;
+// ===== In-memory stores =====
+const accounts = new Map(); 
+// accountId -> { accountId, name, login, server, ts, balance, equity, margin, free, leverage, currency, orders:[], stats:{} }
 
-// accountId -> settings
-// { profitTargetUsd: number (>=0; 0 disables), lossLimitUsd: number (>=0; 0 disables) }
-const settings = new Map();
-
-// accountId -> pending command
-// { id:number, type:"PANIC_CLOSE", target:"ALL", ts:number, status:"NEW"|"DONE"|"ERR", errMsg?:string }
 const commands = new Map();
+// accountId -> { id, type:"PANIC_CLOSE", target:"ALL", ts, status:"NEW|DONE|ERR", errMsg }
+
 let nextCmdId = 1;
 
-function normalizeNumber(x, def = 0) {
-  const n = Number(x);
-  return Number.isFinite(n) ? n : def;
-}
-
-function ensureAccountId(accountId) {
-  if (!firstSeenOrder.has(accountId)) firstSeenOrder.set(accountId, firstSeenSeq++);
-}
-
-function getSettingsFor(accountId) {
-  const s = settings.get(accountId);
-  if (s) return s;
-  return { profitTargetUsd: 0, lossLimitUsd: 0 };
-}
-
-function upsertSettings(accountId, patch) {
-  const cur = getSettingsFor(accountId);
-  const next = {
-    profitTargetUsd: Math.max(0, normalizeNumber(patch.profitTargetUsd ?? cur.profitTargetUsd, 0)),
-    lossLimitUsd: Math.max(0, normalizeNumber(patch.lossLimitUsd ?? cur.lossLimitUsd, 0)),
-  };
-  settings.set(accountId, next);
-  return next;
-}
-
-function issuePanic(accountId) {
-  // If there is already a NEW command, do not spam (prevents “too many requests / exceed” issues)
-  const existing = commands.get(accountId);
-  if (existing && existing.status === "NEW") return { alreadyPending: true, cmd: existing };
-
-  const cmd = {
-    id: nextCmdId++,
-    type: "PANIC_CLOSE",
-    target: "ALL",
-    ts: nowMs(),
-    status: "NEW",
-    errMsg: "",
-  };
-  commands.set(accountId, cmd);
-  return { alreadyPending: false, cmd };
-}
-
-// ---------------- Health ----------------
+// ===== Health =====
 app.get("/health", (req, res) => {
   res.json({
     ok: true,
@@ -87,197 +36,267 @@ app.get("/health", (req, res) => {
   });
 });
 
-// ---------------- Agent -> report snapshot ----------------
-// Agent posts:
-// {accountId,name,login,server,currency,leverage,balance,equity,margin,free,orders:[{...}], stats:{...}}
+// ===== Agent -> report status + orders =====
 app.post("/report", (req, res) => {
   if (!authOk(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
 
   const b = req.body || {};
-  const accountId = String(b.accountId || "").trim();
+  const accountId = String(b.accountId || "");
   if (!accountId) return res.status(400).json({ ok: false, error: "missing accountId" });
-
-  ensureAccountId(accountId);
 
   const payload = {
     accountId,
     name: String(b.name || ""),
-    login: normalizeNumber(b.login, 0),
+    login: Number(b.login || 0),
     server: String(b.server || ""),
     currency: String(b.currency || ""),
-    leverage: normalizeNumber(b.leverage, 0),
+    leverage: Number(b.leverage || 0),
     ts: nowMs(),
-    balance: normalizeNumber(b.balance, 0),
-    equity: normalizeNumber(b.equity, 0),
-    margin: normalizeNumber(b.margin, 0),
-    free: normalizeNumber(b.free, 0),
+    balance: Number(b.balance || 0),
+    equity: Number(b.equity || 0),
+    margin: Number(b.margin || 0),
+    free: Number(b.free || 0),
     orders: Array.isArray(b.orders) ? b.orders : [],
     stats: b.stats && typeof b.stats === "object" ? b.stats : {},
   };
 
   accounts.set(accountId, payload);
-
-  // Auto-issue panic if thresholds are exceeded (optional). Agent will also enforce locally.
-  const s = getSettingsFor(accountId);
-  // profit from orders is best; fallback to equity-balance (open PnL)
-  const ordersProfit = Array.isArray(payload.orders)
-    ? payload.orders.reduce((sum, o) => sum + normalizeNumber(o.profit ?? o.Profit ?? o.pnl ?? o.PnL ?? 0, 0), 0)
-    : 0;
-  const pnl = payload.orders.length ? ordersProfit : (payload.equity - payload.balance);
-
-  if (s.profitTargetUsd > 0 && pnl >= s.profitTargetUsd) {
-    issuePanic(accountId);
-  }
-  if (s.lossLimitUsd > 0 && pnl <= -s.lossLimitUsd) {
-    issuePanic(accountId);
-  }
-
-  return res.json({ ok: true });
+  res.json({ ok: true });
 });
 
-// ---------------- Agent -> get settings ----------------
-app.get("/settings", (req, res) => {
-  if (!authOk(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
-  const accountId = String(req.query.accountId || "").trim();
-  if (!accountId) return res.status(400).json({ ok: false, error: "missing accountId" });
-
-  ensureAccountId(accountId);
-  const s = getSettingsFor(accountId);
-  res.json({ ok: true, accountId, settings: s });
-});
-
-// ---------------- Agent -> poll command ----------------
+// ===== Agent polls command for its account =====
 app.get("/command", (req, res) => {
-  if (!authOk(req)) return res.status(401).json({ ok: false });
+  if (!authOk(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
 
   const accountId = String(req.query.accountId || "");
-  if (!accountId) return res.json({ ok: true, has: false });
+  if (!accountId) return res.status(400).json({ ok: false, error: "missing accountId" });
 
   const cmd = commands.get(accountId);
   if (!cmd || cmd.status !== "NEW") {
     return res.json({ ok: true, has: false });
   }
 
-  // 🔒 أرسل نسخة فقط
-  res.json({
-    ok: true,
-    has: true,
-    command: {
-      id: cmd.id,
-      type: cmd.type,
-      target: cmd.target
-    }
-  });
+  res.json({ ok: true, has: true, command: cmd });
 });
 
-
-// ---------------- Agent -> ack command result ----------------
+// ===== Agent ACK command result =====
 app.post("/command_ack", (req, res) => {
   if (!authOk(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
 
   const b = req.body || {};
-  const accountId = String(b.accountId || "").trim();
-  const id = normalizeNumber(b.id, 0);
-  const status = String(b.status || "").trim();
+  const accountId = String(b.accountId || "");
+  const id = Number(b.id || 0);
+  const status = String(b.status || "");
   const errMsg = String(b.errMsg || "");
 
-  if (!accountId || !id || !status) return res.status(400).json({ ok: false, error: "missing fields" });
+  if (!accountId || !id || !status) {
+    return res.status(400).json({ ok: false, error: "missing fields" });
+  }
 
   const cmd = commands.get(accountId);
   if (cmd && cmd.id === id) {
     cmd.status = status; // DONE | ERR
     cmd.errMsg = errMsg;
     cmd.ackTs = nowMs();
-    commands.delete(accountId);
+    commands.set(accountId, cmd);
   }
 
   res.json({ ok: true });
 });
 
-// ---------------- Dashboard API ----------------
+// ===== Dashboard API =====
 app.get("/api/accounts", (req, res) => {
   if (!authOk(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
 
-  // stable order: first seen
-  const out = Array.from(accounts.values()).sort((a, b) => {
-    const oa = firstSeenOrder.get(a.accountId) || 999999;
-    const ob = firstSeenOrder.get(b.accountId) || 999999;
-    return oa - ob;
-  });
-
-  const withSettings = out.map((a) => ({
-    ...a,
-    settings: getSettingsFor(a.accountId),
-  }));
-
-  res.json({ ok: true, now: nowMs(), accounts: withSettings });
+  const out = Array.from(accounts.values()).sort((a, b) => (b.ts - a.ts));
+  res.json({ ok: true, now: nowMs(), accounts: out });
 });
 
-app.get("/api/settings", (req, res) => {
-  if (!authOk(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
-
-  const accountId = String(req.query.accountId || "").trim();
-  if (!accountId) return res.status(400).json({ ok: false, error: "missing accountId" });
-
-  ensureAccountId(accountId);
-  res.json({ ok: true, accountId, settings: getSettingsFor(accountId) });
-});
-
-app.post("/api/settings", (req, res) => {
-  if (!authOk(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
-
-  const b = req.body || {};
-  const accountId = String(b.accountId || "").trim();
-  if (!accountId) return res.status(400).json({ ok: false, error: "missing accountId" });
-
-  ensureAccountId(accountId);
-
-  const next = upsertSettings(accountId, {
-    profitTargetUsd: b.profitTargetUsd,
-    lossLimitUsd: b.lossLimitUsd,
-  });
-
-  res.json({ ok: true, accountId, settings: next });
-});
-
-// Panic close (single account or ALL)
+// Create Panic Close command (single account or ALL)
 app.post("/api/panic", (req, res) => {
   if (!authOk(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
 
   const b = req.body || {};
-  const accountId = String(b.accountId || "").trim();
+  const accountId = String(b.accountId || "");
+  const target = String(b.target || "ALL");
+
+  if (accountId === "ALL") {
+    // issue to all known accounts
+    for (const accId of accounts.keys()) {
+      commands.set(accId, {
+        id: nextCmdId++,
+        type: "PANIC_CLOSE",
+        target,
+        ts: nowMs(),
+        status: "NEW",
+        errMsg: "",
+      });
+    }
+    return res.json({ ok: true, issued: "ALL" });
+  }
 
   if (!accountId) return res.status(400).json({ ok: false, error: "missing accountId" });
 
-  if (accountId === "ALL") {
-    const issued = [];
-    const skipped = [];
+  commands.set(accountId, {
+    id: nextCmdId++,
+    type: "PANIC_CLOSE",
+    target,
+    ts: nowMs(),
+    status: "NEW",
+    errMsg: "",
+  });
 
-    for (const accId of accounts.keys()) {
-      const r = issuePanic(accId);
-      if (r.alreadyPending) skipped.push(accId);
-      else issued.push(accId);
+  res.json({ ok: true, issued: accountId });
+});
+
+
+
+// ===== Copier (Master/Slave Trade Copy) =====
+// Endpoints:
+//  POST /copier/push   (Master)  body: {group,type,uid,master_ticket,open_time,symbol,cmd,lot,price}
+//  GET  /copier/events (Slave)   ?group=G1&slaveId=S01&since=0&limit=200
+//  POST /copier/ack    (Slave)   body: {group,slaveId,event_id,status,uid,master_ticket,open_time,slave_ticket,err}
+
+let copierNextEventId = 1;
+const copierEvents = [];
+const COPIER_MAX_EVENTS = 50000;
+
+// `${group}|${slaveId}` -> lastAckEventId
+const copierLastAckBySlave = new Map();
+
+// `${group}|${uid}` -> { open:boolean, lastType:"OPEN"|"CLOSE", ts:number }
+const copierUidState = new Map();
+
+function copierCleanup(){
+  const cutoff = nowMs() - 7*24*3600*1000; // 7 days
+  for(const [k, st] of copierUidState.entries()){
+    if((st?.ts||0) < cutoff) copierUidState.delete(k);
+  }
+  // keep events bounded
+  if(copierEvents.length > COPIER_MAX_EVENTS){
+    copierEvents.splice(0, copierEvents.length - COPIER_MAX_EVENTS);
+  }
+}
+
+app.get('/copier/health', (req,res)=>{
+  res.json({
+    ok:true,
+    now: nowMs(),
+    events: copierEvents.length,
+    slaves: copierLastAckBySlave.size,
+    uids: copierUidState.size,
+  });
+});
+
+app.post('/copier/push', (req,res)=>{
+  if(!authOk(req)) return res.status(401).json({ok:false, error:'unauthorized'});
+
+  const e = req.body || {};
+  const group = String(e.group || 'G1');
+  const type = String(e.type || '');
+  const uid  = String(e.uid || '');
+  const master_ticket = Number(e.master_ticket || 0);
+  const open_time     = Number(e.open_time || 0);
+  const symbol = String(e.symbol || '');
+  const cmd    = Number(e.cmd ?? -1);
+  const lot    = Number(e.lot || 0);
+  const price  = Number(e.price || 0);
+
+  if(type !== 'OPEN' && type !== 'CLOSE'){
+    return res.status(400).json({ok:false, error:'type must be OPEN/CLOSE'});
+  }
+  if(!uid || !master_ticket || !open_time || !symbol || cmd < 0){
+    return res.status(400).json({ok:false, error:'missing fields'});
+  }
+
+  const ukey = `${group}|${uid}`;
+  const st = copierUidState.get(ukey) || { open:false, lastType:'', ts:0 };
+
+  // Hard idempotency per UID
+  if(type === 'OPEN'){
+    if(st.open === true){
+      return res.json({ok:true, duplicated:true, reason:'OPEN_ALREADY'});
     }
-
-    return res.json({ ok: true, issued, skipped });
+    st.open = true;
+    st.lastType = 'OPEN';
+    st.ts = nowMs();
+    copierUidState.set(ukey, st);
+  }else{ // CLOSE
+    if(st.open === false){
+      return res.json({ok:true, duplicated:true, reason:'CLOSE_WITHOUT_OPEN'});
+    }
+    if(st.lastType === 'CLOSE'){
+      return res.json({ok:true, duplicated:true, reason:'CLOSE_ALREADY'});
+    }
+    st.open = false;
+    st.lastType = 'CLOSE';
+    st.ts = nowMs();
+    copierUidState.set(ukey, st);
   }
 
-  if (!accounts.has(accountId)) {
-    // still allow issuing, but warn
-    const r = issuePanic(accountId);
-    return res.json({ ok: true, issued: accountId, warning: "account not yet reported", alreadyPending: r.alreadyPending });
+  const payload = {
+    event_id: copierNextEventId++,
+    group,
+    type,
+    uid,
+    master_ticket,
+    open_time,
+    symbol,
+    cmd,
+    lot,
+    price,
+    ts: nowMs(), // ms
+  };
+
+  copierEvents.push(payload);
+  copierCleanup();
+
+  res.json({ok:true, event_id: payload.event_id});
+});
+
+app.post('/copier/ack', (req,res)=>{
+  if(!authOk(req)) return res.status(401).json({ok:false, error:'unauthorized'});
+
+  const b = req.body || {};
+  const group = String(b.group || 'G1');
+  const slaveId = String(b.slaveId || 'S01');
+  const event_id = Number(b.event_id || 0);
+
+  if(!event_id) return res.status(400).json({ok:false, error:'missing event_id'});
+
+  const key = `${group}|${slaveId}`;
+  const last = copierLastAckBySlave.get(key) || 0;
+  if(event_id > last) copierLastAckBySlave.set(key, event_id);
+
+  res.json({ok:true, group, slaveId, last_ack: copierLastAckBySlave.get(key) || 0});
+});
+
+app.get('/copier/events', (req,res)=>{
+  if(!authOk(req)) return res.status(401).json({ok:false, error:'unauthorized'});
+
+  const group = String(req.query.group || 'G1');
+  const slaveId = String(req.query.slaveId || 'S01');
+  const since = Number(req.query.since || 0);
+  const limit = Math.min(Number(req.query.limit || 200), 500);
+
+  const key = `${group}|${slaveId}`;
+  const lastAck = copierLastAckBySlave.get(key) || 0;
+
+  const out = [];
+  for(let i=0;i<copierEvents.length;i++){
+    const ev = copierEvents[i];
+    if(ev.group !== group) continue;
+    if(ev.event_id <= since) continue;
+    if(ev.event_id <= lastAck) continue;
+    out.push(ev);
+    if(out.length >= limit) break;
   }
 
-  const r = issuePanic(accountId);
-  return res.json({ ok: true, issued: accountId, alreadyPending: r.alreadyPending });
+  res.json({ok:true, group, slaveId, since, lastAck, count: out.length, events: out});
 });
 
-// ---------------- Static dashboard ----------------
-// Place dashboard.html in the same folder as server.js
-app.get("/", (req, res) => {
-  res.sendFile(process.cwd() + "/dashboard.html");
-});
-app.use(express.static("."));
+// ===== Serve dashboard static =====
+app.use(express.static(".")); // serves dashboard.html from same folder
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Account Manager listening on", port));
