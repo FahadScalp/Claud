@@ -1,0 +1,12 @@
+{
+  "clients": [
+    {
+      "apiKey": "CHANGE_ME_1",
+      "group": "G1",
+      "slaveId": "S01",
+      "enabled": true,
+      "expiresAt": "2026-12-31T23:59:59Z",
+      "note": "example client"
+    }
+  ]
+}
