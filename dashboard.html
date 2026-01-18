@@ -143,11 +143,11 @@
         <thead>
           <tr>
             <th style="width:220px">Name</th>
-            <th style="width:130px">Equity</th>
-            <th style="width:130px">Balance</th>
-            <th style="width:140px">Profit</th>
-            <th style="width:110px">Orders</th>
-            <th style="width:130px">Last Update</th>
+            <th style="width:140px">Equity</th>
+            <th style="width:140px">Balance</th>
+            <th style="width:160px">Profit</th>
+            <th style="width:120px">Orders</th>
+            <th style="width:140px">Last Update</th>
             <th class="action-cell">Action</th>
           </tr>
         </thead>
@@ -160,6 +160,7 @@
     <div class="status">
       <span class="dot" id="dot"></span>
       <span id="statusText">…</span>
+      <span class="small" id="endpointsText"></span>
     </div>
   </div>
 
@@ -167,51 +168,35 @@
   // ====== Config ======
   const REFRESH_MS = 2000;
 
-  // endpoint المتوقع لقائمة الحسابات
-  // إذا كان عندك endpoint مختلف، غيّر هذا السطر فقط
+  // حسابات
   const ACCOUNTS_CANDIDATES = [
-  "/accounts",
-  "/agents",
-  "/status",
-  "/state",
-  "/dashboard",
-  "/data",
-  "/list",
-  "/api/accounts",
-  "/api/agents",
-  "/api/status"
-];
+    "/accounts",
+    "/agents",
+    "/status",
+    "/state",
+    "/dashboard",
+    "/data",
+    "/list",
+    "/api/accounts",
+    "/api/agents",
+    "/api/status"
+  ];
 
-let ACCOUNTS_ENDPOINT = "";
+  // إغلاق (Auto-detect)
+  const CLOSE_CANDIDATES = [
+    "/close-all",
+    "/close_all",
+    "/closeAll",
+    "/close",
+    "/closeAllOrders",
+    "/api/close-all",
+    "/api/close_all",
+    "/api/closeAll",
+    "/api/close"
+  ];
 
-async function detectAccountsEndpoint(){
-  for(const ep of ACCOUNTS_CANDIDATES){
-    try{
-      const r = await fetch(ep, { headers: headers() });
-      const ct = (r.headers.get("content-type") || "").toLowerCase();
-      const txt = await r.text();
-
-      // لازم يكون JSON
-      if(!ct.includes("application/json")) continue;
-
-      const js = JSON.parse(txt);
-
-      // نقبل إذا رجع array أو object فيه accounts/agents/items/data
-      const list = Array.isArray(js) ? js : (js.accounts || js.agents || js.items || js.data);
-      if(Array.isArray(list)){
-        ACCOUNTS_ENDPOINT = ep;
-        setStatus(true, "تم العثور على endpoint: " + ep);
-        return true;
-      }
-    }catch(e){}
-  }
-  return false;
-}
-
-
-  // إغلاق كامل (متوافق مع أكثر من شكل)
-  const CLOSE_ALL_ENDPOINT = "/close-all"; // غالباً عندك
-  const CLOSE_ONE_ENDPOINT = "/close";     // fallback (لو موجود)
+  let ACCOUNTS_ENDPOINT = "";
+  let CLOSE_ENDPOINT = "";
 
   const els = {
     tbody: document.getElementById("tbody"),
@@ -221,6 +206,7 @@ async function detectAccountsEndpoint(){
     status: document.getElementById("statusText"),
     dot: document.getElementById("dot"),
     lastUpdatedText: document.getElementById("lastUpdatedText"),
+    endpointsText: document.getElementById("endpointsText"),
   };
 
   function getApiKey(){
@@ -230,8 +216,9 @@ async function detectAccountsEndpoint(){
     localStorage.setItem("API_KEY", (v || "").trim());
   }
 
-  function headers(){
-    const h = { "Content-Type":"application/json" };
+  function headers(withJson=true){
+    const h = {};
+    if(withJson) h["Content-Type"]="application/json";
     const key = getApiKey();
     if(key) h["x-api-key"] = key;
     return h;
@@ -255,15 +242,63 @@ async function detectAccountsEndpoint(){
     els.dot.classList.add(ok ? "ok":"bad");
   }
 
+  function setEndpointsText(){
+    const a = ACCOUNTS_ENDPOINT ? ACCOUNTS_ENDPOINT : "—";
+    const c = CLOSE_ENDPOINT ? CLOSE_ENDPOINT : "—";
+    els.endpointsText.textContent = `Endpoints | accounts: ${a} | close: ${c}`;
+  }
+
   async function fetchJSON(url, opts={}){
     const res = await fetch(url, opts);
     const text = await res.text();
-    // حماية لو السيرفر رجّع شيء غير JSON
     try{
       return JSON.parse(text);
     }catch(e){
-      throw new Error("Bad JSON from " + url + " | " + text.slice(0,120));
+      throw new Error("Bad JSON from " + url + " | " + text.slice(0,160));
     }
+  }
+
+  async function detectAccountsEndpoint(){
+    for(const ep of ACCOUNTS_CANDIDATES){
+      try{
+        const r = await fetch(ep, { headers: headers(false) });
+        const ct = (r.headers.get("content-type") || "").toLowerCase();
+        const txt = await r.text();
+        if(!ct.includes("application/json")) continue;
+
+        const js = JSON.parse(txt);
+        const list = Array.isArray(js) ? js : (js.accounts || js.agents || js.items || js.data);
+        if(Array.isArray(list)){
+          ACCOUNTS_ENDPOINT = ep;
+          return true;
+        }
+      }catch(e){}
+    }
+    return false;
+  }
+
+  async function detectCloseEndpoint(){
+    for(const ep of CLOSE_CANDIDATES){
+      // نجرب GET أول (قد يرجع 404 أو HTML)
+      try{
+        const r = await fetch(ep, { method:"GET", headers: headers(false) });
+        if(r.status !== 404){
+          // ليس شرط JSON، المهم مو 404
+          CLOSE_ENDPOINT = ep;
+          return true;
+        }
+      }catch(e){}
+
+      // نجرب POST ب Body "PING" (سيرفرات كثيرة ترجع 400 بدل 404 إذا موجود)
+      try{
+        const r = await fetch(ep, { method:"POST", headers: headers(true), body: JSON.stringify({ ping:true }) });
+        if(r.status !== 404){
+          CLOSE_ENDPOINT = ep;
+          return true;
+        }
+      }catch(e){}
+    }
+    return false;
   }
 
   // ====== Render table ======
@@ -274,20 +309,27 @@ async function detectAccountsEndpoint(){
     }
 
     const rows = list.map(acc => {
-      // مرونة مع اختلاف أسماء الحقول من السيرفر/Agent
       const name    = acc.name ?? acc.Name ?? acc.accountName ?? "—";
       const equity  = Number(acc.equity ?? acc.Equity ?? 0);
       const balance = Number(acc.balance ?? acc.Balance ?? 0);
-      const orders  = Number(acc.orders ?? acc.Orders ?? acc.openOrders ?? 0);
 
-      // Profit: لو السيرفر يرسل profit استخدمه، وإلا احسبه من Equity-Balance
+      // ===== Orders: قوي جدًا ضد اختلافات السيرفر =====
+      const orders =
+        Number(acc.ordersOpen ?? acc.open_orders ?? acc.openOrders ?? acc.orders ?? acc.trades ?? acc.positionsCount ?? acc.openCount ?? acc.totalOrders ?? 0) ||
+        (Array.isArray(acc.positions) ? acc.positions.length : 0) ||
+        (Array.isArray(acc.trades_list) ? acc.trades_list.length : 0) ||
+        (Array.isArray(acc.orders_list) ? acc.orders_list.length : 0) ||
+        (Array.isArray(acc.orders) ? acc.orders.length : 0) ||
+        (Array.isArray(acc.trades) ? acc.trades.length : 0);
+
+      // Profit: لو السيرفر يرسل profit استخدمه، وإلا احسبه
       let profit = acc.profit ?? acc.Profit ?? acc.pnl ?? acc.PnL;
       profit = (profit === undefined || profit === null) ? (equity - balance) : Number(profit);
 
       const profitClass = profit >= 0 ? "good" : "bad";
       const profitText  = (profit >= 0 ? "+" : "") + fmt2(profit);
 
-      // lastUpdate يمكن يكون timestamp ms أو ISO أو seconds
+      // lastUpdate
       let lastTs = acc.ts ?? acc.lastUpdate ?? acc.last_update ?? acc.updatedAt ?? acc.updated_at ?? 0;
       if(typeof lastTs === "string"){
         const parsed = Date.parse(lastTs);
@@ -299,8 +341,10 @@ async function detectAccountsEndpoint(){
         ? `<span class="muted">—</span>`
         : `<span class="${sAgo <= 5 ? "good" : (sAgo <= 30 ? "muted" : "bad")}">${sAgo > 0 ? "-" + sAgo + "s" : "now"}</span>`;
 
-      // accountId: نخليه داخلي فقط للتنفيذ (ما نعرضه)
+      // معرفات ممكنة للإغلاق
       const accountId = acc.accountId ?? acc.AccountId ?? acc.id ?? acc.agentId ?? acc.agent_id ?? "";
+      const login     = acc.login ?? acc.Login ?? acc.accountLogin ?? "";
+      const idForUi   = encodeURIComponent(String(accountId || login || name || ""));
 
       return `
         <tr>
@@ -311,7 +355,7 @@ async function detectAccountsEndpoint(){
           <td><span class="pill">${isFinite(orders)?orders:0}</span></td>
           <td>${lastUpdateCell}</td>
           <td class="action-cell">
-            <button class="rowbtn" onclick="closeOne('${encodeURIComponent(String(accountId))}')">Close All</button>
+            <button class="rowbtn" onclick="closeOne('${idForUi}')">Close All</button>
           </td>
         </tr>
       `;
@@ -327,72 +371,84 @@ async function detectAccountsEndpoint(){
   }
 
   // ====== Actions ======
+  async function postClose(payload){
+    if(!CLOSE_ENDPOINT){
+      alert("تأكد من endpoints: لا يوجد Close endpoint");
+      return false;
+    }
+    // جرّب الطلب
+    try{
+      const r = await fetch(CLOSE_ENDPOINT, {
+        method:"POST",
+        headers: headers(true),
+        body: JSON.stringify(payload)
+      });
+      if(r.ok) return true;
+      // حتى لو مو ok، احتمال يرجع JSON يشرح
+      return false;
+    }catch(e){
+      return false;
+    }
+  }
+
   async function closeAll(){
-    // جرّب أكثر من شكل عشان ما نكسر اللي عندك
-    const payload = { action:"CLOSE_ALL", all:true };
+    // جرّب عدة أشكال لأن السيرفر/Agent تختلف
+    const payloads = [
+      { action:"CLOSE_ALL", all:true },
+      { cmd:"CLOSE_ALL", all:true },
+      { type:"CLOSE_ALL", all:true },
+      { closeAll:true },
+      { all:true }
+    ];
 
-    // 1) POST /close-all
-    try{
-      await fetchJSON(CLOSE_ALL_ENDPOINT, { method:"POST", headers: headers(), body: JSON.stringify(payload) });
-      return true;
-    }catch(e){}
-
-    // 2) POST /close  (fallback)
-    try{
-      await fetchJSON(CLOSE_ONE_ENDPOINT, { method:"POST", headers: headers(), body: JSON.stringify(payload) });
-      return true;
-    }catch(e){}
-
-    alert("تعذر تنفيذ Close All — تأكد من endpoint في السيرفر.");
+    for(const p of payloads){
+      const ok = await postClose(p);
+      if(ok) return true;
+    }
+    alert("تعذر تنفيذ Close All — تأكد من endpoint في السيرفر أو شكل الـ payload.");
     return false;
   }
 
-  async function closeOne(accountId){
-    const id = decodeURIComponent(accountId || "");
-    if(!id){
-      alert("accountId غير موجود من السيرفر.");
-      return;
+  async function closeOne(idOrLoginOrName){
+    const v = decodeURIComponent(idOrLoginOrName || "");
+    if(!v){
+      alert("لا يوجد معرف للحساب من السيرفر.");
+      return false;
     }
 
-    const payload = { action:"CLOSE_ALL", accountId: id };
+    const payloads = [
+      { action:"CLOSE_ALL", accountId: v },
+      { action:"CLOSE_ALL", login: v },
+      { action:"CLOSE_ALL", id: v },
+      { action:"CLOSE_ALL", name: v },
+      { accountId: v, closeAll:true },
+      { login: v, closeAll:true },
+      { id: v, closeAll:true },
+      { name: v, closeAll:true }
+    ];
 
-    // 1) POST /close-all مع accountId
-    try{
-      await fetchJSON(CLOSE_ALL_ENDPOINT, { method:"POST", headers: headers(), body: JSON.stringify(payload) });
-      return true;
-    }catch(e){}
+    for(const p of payloads){
+      const ok = await postClose(p);
+      if(ok) return true;
+    }
 
-    // 2) POST /close (fallback)
-    try{
-      await fetchJSON(CLOSE_ONE_ENDPOINT, { method:"POST", headers: headers(), body: JSON.stringify(payload) });
-      return true;
-    }catch(e){}
-
-    alert("تعذر إغلاق حساب واحد — راجع endpoint بالسيرفر.");
+    alert("تعذر إغلاق الحساب — تأكد من endpoints/الحقول المطلوبة في السيرفر.");
     return false;
   }
 
-  // expose to window for onclick
   window.closeOne = closeOne;
 
   // ====== Polling ======
-  let lastOkAt = 0;
-
   async function tick(){
     try{
-      const data = await fetchJSON(ACCOUNTS_ENDPOINT, { headers: headers() });
-
-      // مرونة: ممكن يرجع {accounts:[...]} أو مباشرة [...]
-      const list = Array.isArray(data) ? data : (data.accounts || data.items || data.data || []);
+      const data = await fetchJSON(ACCOUNTS_ENDPOINT, { headers: headers(false) });
+      const list = Array.isArray(data) ? data : (data.accounts || data.items || data.data || data.agents || []);
       renderAccounts(list);
 
-      lastOkAt = Date.now();
       setStatus(true, "متصل");
       els.lastUpdatedText.textContent = new Date().toLocaleString("ar", { hour12: true });
-
     }catch(err){
       setStatus(false, "خطأ اتصال/JSON: " + err.message);
-      // لا تمسح الجدول، خلّه آخر شيء ظاهر
     }
   }
 
@@ -405,21 +461,30 @@ async function detectAccountsEndpoint(){
 
   els.closeAll.addEventListener("click", async () => {
     if(!confirm("متأكد تبي إغلاق جميع الصفقات على كل الحسابات؟")) return;
-    await closeAll();
-    // تحديث سريع بعد الأمر
-    setTimeout(tick, 500);
+    const ok = await closeAll();
+    if(ok) setTimeout(tick, 600);
   });
 
   (async () => {
-  const ok = await detectAccountsEndpoint();
-  if(!ok){
-    setStatus(false, "لم أجد endpoint يعرض الحسابات (JSON). راجع server.js endpoints.");
-    return;
-  }
-  tick();
-  setInterval(tick, REFRESH_MS);
-})();
+    const okA = await detectAccountsEndpoint();
+    if(!okA){
+      setStatus(false, "لم أجد endpoint يعرض الحسابات (JSON). راجع server.js endpoints.");
+      setEndpointsText();
+      return;
+    }
 
+    const okC = await detectCloseEndpoint();
+    if(!okC){
+      // نخلي الصفحة تشتغل لكن نحذر
+      setStatus(true, "متصل (تنبيه: لم أجد endpoint للإغلاق تلقائياً)");
+    }else{
+      setStatus(true, "متصل");
+    }
+
+    setEndpointsText();
+    await tick();
+    setInterval(tick, REFRESH_MS);
+  })();
 </script>
 </body>
 </html>
