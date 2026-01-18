@@ -1,62 +1,121 @@
+// server.js - MT4 Dashboard + Panic Close + Copier (Master/Slave)
+// Node.js (ESM). Works on Render.
+
 import express from "express";
 import cors from "cors";
 
-// ===================== App =====================
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
 const API_KEY = process.env.API_KEY || ""; // optional
-const DEBUG = String(process.env.DEBUG || "") === "1";
 
 function authOk(req) {
   if (!API_KEY) return true;
   return req.get("x-api-key") === API_KEY;
 }
 
-function nowMs() {
-  return Date.now();
+function nowMs() { return Date.now(); }
+
+function safeStr(x) {
+  return (x === undefined || x === null) ? "" : String(x);
 }
 
-// ===================== Dashboard stores =====================
-// accountId -> { accountId, name, login, server, ts, balance, equity, margin, free, leverage, currency, orders:[], stats:{} }
+// ===== In-memory (Dashboard) =====
 const accounts = new Map();
-// accountId -> { id, type:"PANIC_CLOSE", target:"ALL", ts, status:"NEW|DONE|ERR", errMsg }
+// accountId -> { accountId, name, login, server, currency, leverage, ts, balance, equity, margin, free, orders:[], stats:{}, firstSeenIdx }
+let firstSeenSeq = 1;
+
 const commands = new Map();
+// accountId -> { id, type, target, ts, status: NEW|DONE|ERR, errMsg, ackTs }
 let nextCmdId = 1;
 
-// ===================== Copier stores =====================
+// ===== Copier (Master/Slave) =====
 let nextEventId = 1;
-const events = [];
-const MAX_EVENTS = 20000;
-const eventById = new Map(); // event_id -> event
+const eventsById = new Map(); // id -> event
+const eventOrder = []; // [id]
+const acksByEventId = new Map(); // id -> Map(slaveId -> {status, ts, err})
+const eventKeyToId = new Map(); // dedupe: key -> id
 
-// ACK per slave: `${group}|${slaveId}` -> lastAckEventId
-const lastAckBySlave = new Map();
-// Known slaves per group (registered via /copier/events or /copier/ack)
-const groupSlaves = new Map(); // group -> Set(slaveId)
+const groupState = new Map();
+// group -> { slaves: Map(slaveId -> {lastSeen, lastSince}), lastCleanup }
 
-// State per uid: `${group}|${uid}` -> { open:boolean, master_ticket:number, open_time:number, openSlaves:Set, closeSlaves:Set, lastType:string, ts:number }
-const uidState = new Map();
-
-function regSlave(group, slaveId) {
-  const g = String(group || "G1");
-  const s = String(slaveId || "S01");
-  if (!groupSlaves.has(g)) groupSlaves.set(g, new Set());
-  groupSlaves.get(g).add(s);
+function getGroupState(group) {
+  const g = safeStr(group) || "default";
+  if (!groupState.has(g)) groupState.set(g, { slaves: new Map(), lastCleanup: 0 });
+  return groupState.get(g);
 }
 
-function countSlaves(group) {
-  const set = groupSlaves.get(String(group || "G1"));
-  return set ? set.size : 0;
+function cleanupCopier(group) {
+  const st = getGroupState(group);
+  const now = nowMs();
+  if (now - (st.lastCleanup || 0) < 5000) return;
+  st.lastCleanup = now;
+
+  // prune dead slaves (no poll for 60s)
+  for (const [sid, s] of st.slaves.entries()) {
+    if (now - (s.lastSeen || 0) > 60000) st.slaves.delete(sid);
+  }
+
+  // prune very old events (safety) older than 24h
+  const cutoff = now - 24 * 3600 * 1000;
+  while (eventOrder.length) {
+    const id = eventOrder[0];
+    const ev = eventsById.get(id);
+    if (!ev) { eventOrder.shift(); continue; }
+    if ((ev.ts || 0) < cutoff) {
+      deleteEvent(id);
+      continue;
+    }
+    break;
+  }
 }
 
-function debug(...args) {
-  if (DEBUG) console.log(...args);
+function deleteEvent(id) {
+  const ev = eventsById.get(id);
+  if (!ev) return;
+  eventsById.delete(id);
+  acksByEventId.delete(id);
+
+  // remove from order list (lazy)
+  // (keep it simple; order list is small)
+  const idx = eventOrder.indexOf(id);
+  if (idx >= 0) eventOrder.splice(idx, 1);
+
+  // remove from dedupe key map
+  const key = eventKey(ev);
+  if (key) eventKeyToId.delete(key);
 }
 
-// ===================== Health =====================
-app.get("/health", (req, res) => {
+function eventKey(ev) {
+  const group = safeStr(ev.group);
+  const uid = safeStr(ev.uid);
+  const type = safeStr(ev.type);
+  const ticket = safeStr(ev.master_ticket);
+  const openTime = safeStr(ev.open_time);
+  if (!uid && !ticket) return "";
+  return `${group}|${type}|${uid || ticket}|${openTime || ""}`;
+}
+
+function snapshotExpectedSlaves(group) {
+  const st = getGroupState(group);
+  // all currently active slaves
+  return Array.from(st.slaves.keys());
+}
+
+function computePanicProfitFromOrders(orders) {
+  if (!Array.isArray(orders) || orders.length === 0) return 0;
+  let s = 0;
+  for (const o of orders) {
+    const v = o?.profit ?? o?.Profit ?? o?.pnl ?? o?.PnL ?? o?.pl ?? o?.PL;
+    const n = Number(v);
+    if (Number.isFinite(n)) s += n;
+  }
+  return s;
+}
+
+// ===== Health =====
+app.get(["/health", "/"], (req, res) => {
   res.json({
     ok: true,
     now: nowMs(),
@@ -64,29 +123,29 @@ app.get("/health", (req, res) => {
     commands: commands.size,
     copier: {
       next_event_id: nextEventId,
-      events: events.length,
-      slaves: lastAckBySlave.size,
-      uids: uidState.size,
-      groups: groupSlaves.size,
+      events: eventOrder.length,
+      groups: groupState.size,
     },
   });
 });
 
-// ===================== Dashboard API =====================
-// Agent -> report status + orders
+// ===== Dashboard Agent -> report status + orders =====
 app.post("/report", (req, res) => {
   if (!authOk(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
 
   const b = req.body || {};
-  const accountId = String(b.accountId || "");
+  const accountId = safeStr(b.accountId);
   if (!accountId) return res.status(400).json({ ok: false, error: "missing accountId" });
+
+  const prev = accounts.get(accountId);
+  const firstSeenIdx = prev?.firstSeenIdx || firstSeenSeq++;
 
   const payload = {
     accountId,
-    name: String(b.name || ""),
+    name: safeStr(b.name),
     login: Number(b.login || 0),
-    server: String(b.server || ""),
-    currency: String(b.currency || ""),
+    server: safeStr(b.server),
+    currency: safeStr(b.currency),
     leverage: Number(b.leverage || 0),
     ts: nowMs(),
     balance: Number(b.balance || 0),
@@ -94,41 +153,38 @@ app.post("/report", (req, res) => {
     margin: Number(b.margin || 0),
     free: Number(b.free || 0),
     orders: Array.isArray(b.orders) ? b.orders : [],
-    stats: b.stats && typeof b.stats === "object" ? b.stats : {},
+    stats: (b.stats && typeof b.stats === "object") ? b.stats : {},
+    firstSeenIdx,
   };
 
   accounts.set(accountId, payload);
   res.json({ ok: true });
 });
 
-// Agent polls command for its account
+// ===== Agent polls command for its account =====
 app.get("/command", (req, res) => {
   if (!authOk(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
 
-  const accountId = String(req.query.accountId || "");
+  const accountId = safeStr(req.query.accountId);
   if (!accountId) return res.status(400).json({ ok: false, error: "missing accountId" });
 
   const cmd = commands.get(accountId);
-  if (!cmd || cmd.status !== "NEW") {
-    return res.json({ ok: true, has: false });
-  }
+  if (!cmd || cmd.status !== "NEW") return res.json({ ok: true, has: false });
 
   res.json({ ok: true, has: true, command: cmd });
 });
 
-// Agent ACK command result
+// ===== Agent ACK command result =====
 app.post("/command_ack", (req, res) => {
   if (!authOk(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
 
   const b = req.body || {};
-  const accountId = String(b.accountId || "");
+  const accountId = safeStr(b.accountId);
   const id = Number(b.id || 0);
-  const status = String(b.status || "");
-  const errMsg = String(b.errMsg || "");
+  const status = safeStr(b.status);
+  const errMsg = safeStr(b.errMsg);
 
-  if (!accountId || !id || !status) {
-    return res.status(400).json({ ok: false, error: "missing fields" });
-  }
+  if (!accountId || !id || !status) return res.status(400).json({ ok: false, error: "missing fields" });
 
   const cmd = commands.get(accountId);
   if (cmd && cmd.id === id) {
@@ -141,229 +197,216 @@ app.post("/command_ack", (req, res) => {
   res.json({ ok: true });
 });
 
-// Dashboard: list accounts
+// ===== Dashboard API =====
 app.get("/api/accounts", (req, res) => {
   if (!authOk(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
-  const out = Array.from(accounts.values()).sort((a, b) => (a.accountId || "").localeCompare(b.accountId || ""));
-  res.json({ ok: true, now: nowMs(), accounts: out });
+
+  // stable order: firstSeenIdx asc
+  const out = Array.from(accounts.values()).sort((a, b) => (a.firstSeenIdx - b.firstSeenIdx));
+
+  // optional: compute total floating profit from orders
+  let totalOrdersProfit = 0;
+  for (const acc of out) totalOrdersProfit += computePanicProfitFromOrders(acc.orders);
+
+  res.json({ ok: true, now: nowMs(), totalOrdersProfit, accounts: out });
 });
 
-// Dashboard: create Panic Close command (single account or ALL)
+// Create Panic Close command (single account or ALL)
 app.post("/api/panic", (req, res) => {
   if (!authOk(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
 
   const b = req.body || {};
-  const accountId = String(b.accountId || "");
-  const target = String(b.target || "ALL");
+  const accountId = safeStr(b.accountId);
+  const target = safeStr(b.target || "ALL");
+
+  const issueOne = (accId) => {
+    const prev = commands.get(accId);
+    // prevent spam: if there's NEW command within 5s, don't create another
+    if (prev && prev.status === "NEW" && (nowMs() - prev.ts) < 5000) {
+      return { issued: false, reason: "already_pending" };
+    }
+
+    commands.set(accId, {
+      id: nextCmdId++,
+      type: "PANIC_CLOSE",
+      target,
+      ts: nowMs(),
+      status: "NEW",
+      errMsg: "",
+    });
+    return { issued: true };
+  };
 
   if (accountId === "ALL") {
-    for (const accId of accounts.keys()) {
-      commands.set(accId, {
-        id: nextCmdId++,
-        type: "PANIC_CLOSE",
-        target,
-        ts: nowMs(),
-        status: "NEW",
-        errMsg: "",
-      });
-    }
-    return res.json({ ok: true, issued: "ALL" });
+    const results = {};
+    for (const accId of accounts.keys()) results[accId] = issueOne(accId);
+    return res.json({ ok: true, issued: "ALL", results });
   }
 
   if (!accountId) return res.status(400).json({ ok: false, error: "missing accountId" });
-
-  commands.set(accountId, {
-    id: nextCmdId++,
-    type: "PANIC_CLOSE",
-    target,
-    ts: nowMs(),
-    status: "NEW",
-    errMsg: "",
-  });
-
-  res.json({ ok: true, issued: accountId });
+  const r = issueOne(accountId);
+  return res.json({ ok: true, issued: accountId, ...r });
 });
 
-// ===================== Copier API =====================
+// ===== Copier endpoints =====
+// health
 app.get("/copier/health", (req, res) => {
+  const group = safeStr(req.query.group || "default");
+  const st = getGroupState(group);
+  cleanupCopier(group);
+
   res.json({
     ok: true,
     now: nowMs(),
     nextEventId,
-    maxEventId: nextEventId - 1,
-    events: events.length,
-    slaves: lastAckBySlave.size,
-    uids: uidState.size,
-    groups: Array.from(groupSlaves.keys()).map((g) => ({ group: g, slaves: countSlaves(g) })),
+    maxEventId: eventOrder.length ? Math.max(...eventOrder) : 0,
+    events: eventOrder.length,
+    slaves: st.slaves.size,
+    uids: eventKeyToId.size,
+    groups: Array.from(groupState.entries()).map(([g, gs]) => ({ group: g, slaves: gs.slaves.size })),
   });
 });
 
 // Master pushes events
-app.post("/copier/push", (req, res) => {
-  if (!authOk(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
-
-  const e = req.body || {};
-  const group = String(e.group || "G1");
-  const type = String(e.type || "");
-  if (type !== "OPEN" && type !== "CLOSE") {
-    return res.status(400).json({ ok: false, error: "type must be OPEN/CLOSE" });
-  }
-
-  const uid = String(e.uid || "");
-  const open_time = Number(e.open_time || 0);
-  const master_ticket = Number(e.master_ticket || 0);
-  const symbol = String(e.symbol || "");
-  const cmd = Number(e.cmd ?? -1);
-  const lot = Number(e.lot || 0);
-  const price = Number(e.price || 0);
-
-  if (!uid || !open_time || !master_ticket || !symbol || (cmd !== 0 && cmd !== 1 && cmd < 0)) {
-    // cmd: OP_BUY=0, OP_SELL=1 in MT4; but allow any >=0
-    return res.status(400).json({ ok: false, error: "missing fields" });
-  }
-
-  const skey = `${group}|${uid}`;
-  const st = uidState.get(skey) || {
-    open: false,
-    master_ticket,
-    open_time,
-    openSlaves: new Set(),
-    closeSlaves: new Set(),
-    lastType: "",
-    ts: 0,
-  };
-
-  // ===== Hard anti-duplicate logic (by uid) =====
-  if (type === "OPEN") {
-    if (st.open === true) {
-      return res.json({ ok: true, duplicated: true, reason: "OPEN_ALREADY" });
-    }
-    st.open = true;
-    st.lastType = "OPEN";
-    st.ts = nowMs();
-    st.master_ticket = master_ticket;
-    st.open_time = open_time;
-    st.openSlaves = new Set();
-    st.closeSlaves = new Set();
-    uidState.set(skey, st);
-  } else {
-    if (st.open === false) {
-      return res.json({ ok: true, duplicated: true, reason: "CLOSE_WITHOUT_OPEN" });
-    }
-    if (st.lastType === "CLOSE") {
-      return res.json({ ok: true, duplicated: true, reason: "CLOSE_ALREADY" });
-    }
-    st.open = false;
-    st.lastType = "CLOSE";
-    st.ts = nowMs();
-    uidState.set(skey, st);
-  }
-
-  const payload = {
-    event_id: nextEventId++,
-    group,
-    type,
-    uid,
-    open_time,
-    master_ticket,
-    symbol,
-    cmd,
-    lot,
-    price,
-    ts: nowMs(),
-  };
-
-  events.push(payload);
-  eventById.set(payload.event_id, payload);
-
-  if (events.length > MAX_EVENTS) {
-    const removed = events.splice(0, events.length - MAX_EVENTS);
-    for (const ev of removed) eventById.delete(ev.event_id);
-  }
-
-  debug("COPIER PUSH", payload);
-  res.json({ ok: true, event_id: payload.event_id });
-});
-
-// Slave ACK
-app.post("/copier/ack", (req, res) => {
+app.post(["/copier/push", "/push"], (req, res) => {
   if (!authOk(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
 
   const b = req.body || {};
-  const group = String(b.group || "G1");
-  const slaveId = String(b.slaveId || "S01");
-  const event_id = Number(b.event_id || 0);
-  const status = String(b.status || "");
+  const group = safeStr(b.group || "default");
+  const type = safeStr(b.type || "").toUpperCase(); // OPEN/CLOSE/MODIFY
 
-  if (!event_id) return res.status(400).json({ ok: false, error: "missing event_id" });
+  if (!type) return res.status(400).json({ ok: false, error: "missing type" });
 
-  regSlave(group, slaveId);
+  cleanupCopier(group);
 
-  const key = `${group}|${slaveId}`;
-  const last = lastAckBySlave.get(key) || 0;
-  if (event_id > last) lastAckBySlave.set(key, event_id);
+  const ev = {
+    id: nextEventId++,
+    ts: nowMs(),
+    group,
+    type,
+    uid: safeStr(b.uid || ""),
+    master_ticket: Number(b.master_ticket || 0),
+    open_time: Number(b.open_time || 0),
+    symbol: safeStr(b.symbol || ""),
+    cmd: Number(b.cmd || 0),
+    lots: Number(b.lots || 0),
+    price: Number(b.price || 0),
+    sl: Number(b.sl || 0),
+    tp: Number(b.tp || 0),
+    comment: safeStr(b.comment || ""),
+    // for CLOSE: might include close_ticket or close_time
+    close_time: Number(b.close_time || 0),
+    // snapshot expected slaves for CLOSE events (delete after all ack)
+    expectedSlaves: (type === "CLOSE") ? snapshotExpectedSlaves(group) : undefined,
+  };
 
-  // optional: state cleanup when all known slaves DONE on CLOSE
-  const ev = eventById.get(event_id);
-  if (ev && ev.uid) {
-    const skey = `${group}|${ev.uid}`;
-    const st = uidState.get(skey);
-    if (st) {
-      if (ev.type === "OPEN" && status === "DONE") {
-        st.openSlaves.add(slaveId);
-      }
-      if (ev.type === "CLOSE" && status === "DONE") {
-        st.closeSlaves.add(slaveId);
-        const need = countSlaves(group);
-        if (need > 0 && st.closeSlaves.size >= need) {
-          uidState.delete(skey);
-          debug("COPIER CLEAN uid", skey, "after close acks", st.closeSlaves.size, "/", need);
-        }
-      }
-    }
+  const key = eventKey(ev);
+  if (key && eventKeyToId.has(key)) {
+    // already exists
+    return res.json({ ok: true, dedup: true, id: eventKeyToId.get(key) });
   }
 
-  debug("COPIER ACK", { group, slaveId, event_id, status, lastAck: lastAckBySlave.get(key) || 0 });
-  res.json({ ok: true, group, slaveId, last_ack: lastAckBySlave.get(key) || 0 });
+  eventsById.set(ev.id, ev);
+  eventOrder.push(ev.id);
+  if (key) eventKeyToId.set(key, ev.id);
+
+  // init ack map
+  acksByEventId.set(ev.id, new Map());
+
+  // if CLOSE and no slaves => delete immediately (nothing to do)
+  if (type === "CLOSE" && Array.isArray(ev.expectedSlaves) && ev.expectedSlaves.length === 0) {
+    deleteEvent(ev.id);
+    return res.json({ ok: true, queued: true, id: ev.id, note: "no_slaves" });
+  }
+
+  res.json({ ok: true, queued: true, id: ev.id });
 });
 
-// Slave polls events (filtered by ACK)
+// Slave pulls events
 app.get("/copier/events", (req, res) => {
-  if (!authOk(req)) return res.status(401).json({ ok: false, error: "unauthorized" });
-
-  const group = String(req.query.group || "G1");
-  const slaveId = String(req.query.slaveId || "S01");
+  const group = safeStr(req.query.group || "default");
+  const slaveId = safeStr(req.query.slaveId || "");
   const since = Number(req.query.since || 0);
-  const limit = Math.min(Number(req.query.limit || 100), 500);
+  const limit = Math.max(1, Math.min(500, Number(req.query.limit || 200)));
 
-  regSlave(group, slaveId);
-
-  const key = `${group}|${slaveId}`;
-  const lastAck = lastAckBySlave.get(key) || 0;
+  const st = getGroupState(group);
+  if (slaveId) st.slaves.set(slaveId, { lastSeen: nowMs(), lastSince: since });
+  cleanupCopier(group);
 
   const out = [];
-  for (let i = 0; i < events.length; i++) {
-    const ev = events[i];
+  for (const id of eventOrder) {
+    if (id <= since) continue;
+    const ev = eventsById.get(id);
+    if (!ev) continue;
     if (ev.group !== group) continue;
-    if (ev.event_id <= since) continue;
-    if (ev.event_id <= lastAck) continue;
     out.push(ev);
     if (out.length >= limit) break;
   }
 
   res.json({
     ok: true,
-    group,
-    slaveId,
-    since,
-    lastAck,
-    maxEventId: nextEventId - 1,
-    count: out.length,
+    now: nowMs(),
+    nextEventId,
+    maxEventId: eventOrder.length ? Math.max(...eventOrder) : 0,
     events: out,
+    slaves: st.slaves.size,
+    uids: eventKeyToId.size,
+    groups: Array.from(groupState.entries()).map(([g, gs]) => ({ group: g, slaves: gs.slaves.size })),
   });
 });
 
-// ===================== Serve dashboard =====================
+// Slave ACK
+app.post("/copier/ack", (req, res) => {
+  const b = req.body || {};
+  const group = safeStr(b.group || "default");
+  const slaveId = safeStr(b.slaveId || "");
+  const eventId = Number(b.eventId || 0);
+  const status = safeStr(b.status || "").toUpperCase(); // DONE/ERR/SKIP
+  const err = safeStr(b.err || "");
+
+  if (!slaveId || !eventId || !status) return res.status(400).json({ ok: false, error: "missing fields" });
+
+  const st = getGroupState(group);
+  st.slaves.set(slaveId, { lastSeen: nowMs(), lastSince: st.slaves.get(slaveId)?.lastSince || 0 });
+
+  const ev = eventsById.get(eventId);
+  if (!ev) return res.json({ ok: true, gone: true });
+
+  const m = acksByEventId.get(eventId) || new Map();
+  m.set(slaveId, { status, ts: nowMs(), err });
+  acksByEventId.set(eventId, m);
+
+  // deletion rule: if event is CLOSE and all expected slaves acked (DONE or SKIP), delete all events for same uid
+  if (ev.type === "CLOSE" && Array.isArray(ev.expectedSlaves)) {
+    const expected = ev.expectedSlaves;
+    const allAck = expected.every((sid) => {
+      const a = m.get(sid);
+      return a && (a.status === "DONE" || a.status === "SKIP");
+    });
+
+    if (allAck) {
+      // delete all events that share same (group, uid/master_ticket, open_time)
+      const uid = safeStr(ev.uid);
+      const ticket = safeStr(ev.master_ticket);
+      const openTime = safeStr(ev.open_time);
+
+      const toDel = [];
+      for (const id of [...eventOrder]) {
+        const e2 = eventsById.get(id);
+        if (!e2) continue;
+        if (e2.group !== group) continue;
+        const sameUid = uid && (safeStr(e2.uid) === uid);
+        const sameTicket = !uid && ticket && (safeStr(e2.master_ticket) === ticket) && (safeStr(e2.open_time) === openTime);
+        if (sameUid || sameTicket) toDel.push(id);
+      }
+      for (const id of toDel) deleteEvent(id);
+    }
+  }
+
+  res.json({ ok: true });
+});
+
+// ===== Serve static dashboard =====
 app.use(express.static(".")); // serves dashboard.html from same folder
 
 const port = process.env.PORT || 10000;

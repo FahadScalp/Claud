@@ -30,11 +30,13 @@
     .wrap{max-width:1200px;margin:24px auto;padding:0 16px}
     .topbar{
       display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
-      margin-bottom:12px;
+      margin-bottom:16px;
     }
-    .title{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;font-weight:700;font-size:20px}
+    .title{
+      display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;
+      font-weight:700;font-size:20px;
+    }
     .subtitle{color:var(--muted);font-weight:500;font-size:13px}
-
     .controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     .input{
       background: rgba(255,255,255,.04);
@@ -43,7 +45,7 @@
       padding:10px 12px;
       border-radius:12px;
       outline:none;
-      min-width:220px;
+      min-width:240px;
     }
     .btn{
       border:0; cursor:pointer;
@@ -54,27 +56,14 @@
       background:var(--btn);
       box-shadow: var(--shadow);
       display:inline-flex;align-items:center;gap:8px;
-      white-space:nowrap;
     }
     .btn.secondary{background:var(--btn2); box-shadow:none; border:1px solid var(--line); color:var(--text)}
-
-    .summary{
-      display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
-      margin: 10px 0 14px;
-      padding: 12px 14px;
-      border:1px solid var(--line);
-      border-radius: var(--radius);
-      background: rgba(255,255,255,.02);
-    }
-    .sumLabel{color:var(--muted);font-size:12px}
-    .sumValue{font-size:20px;font-weight:900;direction:ltr}
-
     .card{
       background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.00));
       border:1px solid var(--line);
       border-radius: var(--radius);
       box-shadow: var(--shadow);
-      overflow:hidden;
+      overflow-x:auto; overflow-y:hidden;
     }
     table{width:100%;border-collapse:separate;border-spacing:0}
     thead th{
@@ -86,11 +75,14 @@
       border-bottom:1px solid var(--line);
       position:sticky; top:0;
       backdrop-filter: blur(6px);
-      white-space:nowrap;
     }
-    tbody td{padding:14px 14px;border-bottom:1px solid rgba(255,255,255,.05);font-size:14px;vertical-align:middle}
+    tbody td{
+      padding:14px 14px;
+      border-bottom:1px solid rgba(255,255,255,.05);
+      font-size:14px;
+      vertical-align: middle;
+    }
     tbody tr:hover{background: rgba(255,255,255,.02)}
-
     .pill{
       display:inline-block;
       padding:6px 10px;
@@ -99,16 +91,14 @@
       font-size:13px;
       border:1px solid rgba(255,255,255,.10);
       background: rgba(255,255,255,.03);
-      min-width:84px;
+      min-width:86px;
       text-align:center;
       direction:ltr;
-      white-space:nowrap;
     }
     .good{color:var(--good); border-color: rgba(34,197,94,.35); background: rgba(34,197,94,.08)}
     .bad{color:var(--bad); border-color: rgba(239,68,68,.35); background: rgba(239,68,68,.08)}
     .muted{color:var(--muted)}
-
-    .action-cell{width:150px; white-space:nowrap}
+    .action-cell{width:130px}
     .rowbtn{
       border:0; cursor:pointer;
       border-radius:12px;
@@ -116,46 +106,54 @@
       font-weight:800;
       color:white;
       background:var(--btn);
-      white-space:nowrap;
+      width: 100%;
     }
-
-    .settings{
-      display:flex;
-      gap:8px;
-      align-items:center;
-      justify-content:flex-start;
-      flex-wrap:wrap;
-      white-space:nowrap;
+    .status{
+      display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+      margin-top:10px;
+      color:var(--muted); font-size:12px;
     }
-    .sinput{
-      width:78px;
-      min-width:78px;
-      padding:7px 9px;
-      border-radius:10px;
-      border:1px solid var(--line);
-      background: rgba(255,255,255,.04);
-      color: var(--text);
-      outline:none;
-      direction:ltr;
+    .dot{
+      width:8px; height:8px; border-radius:50%;
+      background: var(--warn);
+      display:inline-block;
     }
-    .sbtn{
-      padding:7px 10px;
-      border-radius:10px;
-      border:1px solid var(--line);
-      background: rgba(255,255,255,.05);
-      color: var(--text);
-      cursor:pointer;
-      font-weight:800;
-    }
-
-    .status{display:flex; gap:10px; align-items:center; flex-wrap:wrap;margin-top:10px;color:var(--muted); font-size:12px}
-    .dot{width:8px; height:8px; border-radius:50%;background: var(--warn);display:inline-block}
     .dot.ok{background:var(--good)}
     .dot.bad{background:var(--bad)}
 
-    /* Mobile: keep table, just make it scrollable horizontally */
-    .card{overflow:auto}
-    table{min-width:980px}
+    /* ===== Top Summary Card ===== */
+    .summary{
+      display:flex;
+      gap:12px;
+      flex-wrap:wrap;
+      margin: 8px 0 14px;
+    }
+    .summaryCard{
+      flex: 1 1 260px;
+      border:1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.00));
+      padding: 12px 14px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+    }
+    .summaryTitle{
+      font-weight:800;
+      font-size:13px;
+      color: var(--muted);
+    }
+    .summaryValue{
+      font-weight:900;
+      font-size:16px;
+      direction:ltr;
+    }
+
+
+    /* ✅ على الديسكتوب أخفِ الـ Labels نهائيًا */
+    .mlabel{display:none !important;}
   </style>
 </head>
 <body>
@@ -173,12 +171,16 @@
       </div>
     </div>
 
+    <!-- ✅ إجمالي ربح كل الحسابات -->
     <div class="summary">
-      <div>
-        <div class="sumLabel">✅ إجمالي ربح كل الحسابات (الصفقات المفتوحة)</div>
-        <div class="sumValue" id="allProfit">0.00</div>
+      <div class="summaryCard">
+        <div class="summaryTitle">إجمالي الربح (كل الحسابات)</div>
+        <div class="summaryValue" id="sumProfit">0.00</div>
       </div>
-      <div class="sumLabel" id="hintText">الهدف TP / الخسارة SL لكل حساب بالدولار (0 = تعطيل)</div>
+      <div class="summaryCard">
+        <div class="summaryTitle">إجمالي الصفقات المفتوحة (كل الحسابات)</div>
+        <div class="summaryValue" id="sumOrders">0</div>
+      </div>
     </div>
 
     <div class="card">
@@ -186,17 +188,16 @@
         <thead>
           <tr>
             <th style="width:220px">Name</th>
-            <th style="width:120px">Orders</th>
-            <th style="width:180px">Total Profit (Orders)</th>
-            <th style="width:140px">Balance</th>
             <th style="width:140px">Equity</th>
+            <th style="width:140px">Balance</th>
+            <th style="width:180px">Total Profit (Orders)</th>
+            <th style="width:120px">Orders</th>
             <th style="width:140px">Last Update</th>
-            <th style="width:260px">TP/SL (USD)</th>
             <th class="action-cell">Action</th>
           </tr>
         </thead>
         <tbody id="tbody">
-          <tr><td colspan="8" class="muted">جاري التحميل…</td></tr>
+          <tr><td colspan="7" class="muted">جاري التحميل…</td></tr>
         </tbody>
       </table>
     </div>
@@ -211,7 +212,6 @@
   const REFRESH_MS = 2000;
   const ACCOUNTS_ENDPOINT = "/api/accounts";
   const PANIC_ENDPOINT    = "/api/panic";
-  const SETTINGS_ENDPOINT = "/api/settings";
 
   const els = {
     tbody: document.getElementById("tbody"),
@@ -221,7 +221,8 @@
     status: document.getElementById("statusText"),
     dot: document.getElementById("dot"),
     lastUpdatedText: document.getElementById("lastUpdatedText"),
-    allProfit: document.getElementById("allProfit"),
+    sumProfit: document.getElementById("sumProfit"),
+    sumOrders: document.getElementById("sumOrders"),
   };
 
   function getApiKey(){ return (localStorage.getItem("API_KEY") || "").trim(); }
@@ -247,7 +248,9 @@
   }
 
   function escapeHtml(s){
-    return s.replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[m]));
+    return String(s).replace(/[&<>"']/g, m => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"
+    }[m]));
   }
 
   function agoSeconds(ts){
@@ -269,7 +272,6 @@
     const n = Number(v);
     return isFinite(n) ? n : 0;
   }
-
   function calcOrdersProfit(orders){
     if(!Array.isArray(orders) || orders.length===0) return 0;
     let s = 0;
@@ -277,87 +279,120 @@
     return s;
   }
 
-  // ===== Stable order of accounts =====
-  const stableOrder = [];
-  const stableSet = new Set();
-  function rememberOrder(accountId){
-    if(!accountId) return;
-    if(stableSet.has(accountId)) return;
-    stableSet.add(accountId);
-    stableOrder.push(accountId);
+  // ===== Stable order (fix swap) =====
+  const ORDER_KEY = "ACCOUNTS_ORDER_V1"; // localStorage map
+
+  function loadOrderMap(){
+    try{
+      const raw = localStorage.getItem(ORDER_KEY);
+      const obj = raw ? JSON.parse(raw) : {};
+      return (obj && typeof obj === "object") ? obj : {};
+    }catch(e){
+      return {};
+    }
   }
 
-  function stableSort(list){
-    // remember new ones
-    for(const a of list){
-      rememberOrder(a.accountId);
+  function saveOrderMap(map){
+    try{ localStorage.setItem(ORDER_KEY, JSON.stringify(map || {})); }catch(e){}
+  }
+
+  function ensureStableOrder(list){
+    // map: accountId -> index (first seen order)
+    const map = loadOrderMap();
+    let changed = false;
+
+    for(const acc of list){
+      const id = String(acc.accountId ?? "");
+      if(!id) continue;
+      if(map[id] === undefined){
+        map[id] = Object.keys(map).length + 1; // next
+        changed = true;
+      }
     }
-    // sort by first-seen order, otherwise by accountId
-    const idx = new Map(stableOrder.map((id,i)=>[id,i]));
-    return [...list].sort((a,b)=>{
-      const ia = idx.has(a.accountId) ? idx.get(a.accountId) : 1e9;
-      const ib = idx.has(b.accountId) ? idx.get(b.accountId) : 1e9;
-      if(ia !== ib) return ia - ib;
-      return String(a.accountId||"").localeCompare(String(b.accountId||""));
+    if(changed) saveOrderMap(map);
+
+    // stable sort by map index, fallback by name
+    return list.slice().sort((a,b)=>{
+      const ida = String(a.accountId ?? "");
+      const idb = String(b.accountId ?? "");
+      const oa = map[ida] ?? 999999;
+      const ob = map[idb] ?? 999999;
+      if(oa !== ob) return oa - ob;
+      const na = String(a.name ?? "");
+      const nb = String(b.name ?? "");
+      return na.localeCompare(nb, "ar");
     });
+  }
+
+  // ===== Summary =====
+  function renderSummary(list){
+    let totalProfitAll = 0;
+    let totalOrdersAll = 0;
+
+    for(const acc of list){
+      const equity  = Number(acc.equity ?? 0);
+      const balance = Number(acc.balance ?? 0);
+      const ordersArr = Array.isArray(acc.orders) ? acc.orders : [];
+      const ordersCount = ordersArr.length;
+
+      let p = calcOrdersProfit(ordersArr);
+      if(ordersCount === 0) p = 0;
+      else if(p === 0) p = equity - balance;
+
+      totalProfitAll += p;
+      totalOrdersAll += ordersCount;
+    }
+
+    els.sumOrders.textContent = String(totalOrdersAll);
+
+    const cls = totalProfitAll >= 0 ? "good" : "bad";
+    els.sumProfit.classList.remove("good","bad");
+    els.sumProfit.classList.add(cls);
+    els.sumProfit.textContent = (totalProfitAll >= 0 ? "+" : "") + fmt2(totalProfitAll);
   }
 
   // ===== Render =====
   function renderAccounts(list){
     if(!Array.isArray(list) || list.length === 0){
-      els.tbody.innerHTML = `<tr><td colspan="8" class="muted">لا توجد حسابات حالياً.</td></tr>`;
-      els.allProfit.textContent = "0.00";
+      els.tbody.innerHTML = `<tr><td colspan="7" class="muted">لا توجد حسابات حالياً.</td></tr>`;
+      els.sumProfit.textContent = "0.00";
+      els.sumOrders.textContent = "0";
       return;
     }
 
-    list = stableSort(list);
-
-    let allProfit = 0;
+    renderSummary(list);
 
     const rows = list.map(acc => {
-      const name    = acc.name || "—";
-      const equity  = Number(acc.equity || 0);
-      const balance = Number(acc.balance || 0);
+      const name    = acc.name ?? "—";
+      const equity  = Number(acc.equity ?? 0);
+      const balance = Number(acc.balance ?? 0);
+
       const ordersArr = Array.isArray(acc.orders) ? acc.orders : [];
       const ordersCount = ordersArr.length;
 
-      // total profit = sum of orders profits (open positions)
       let totalProfit = calcOrdersProfit(ordersArr);
       if(ordersCount === 0) totalProfit = 0;
-      else if(totalProfit === 0) totalProfit = equity - balance; // fallback if agent doesn't send per-order profit
-
-      allProfit += totalProfit;
+      else if(totalProfit === 0) totalProfit = equity - balance;
 
       const profitClass = totalProfit >= 0 ? "good" : "bad";
       const profitText  = (totalProfit >= 0 ? "+" : "") + fmt2(totalProfit);
 
-      let lastTs = acc.ts || 0;
+      const lastTs = acc.ts ?? 0;
       const sAgo = agoSeconds(lastTs);
       const lastUpdateCell = (sAgo === null)
         ? `<span class="muted">—</span>`
         : `<span class="${sAgo <= 5 ? "good" : (sAgo <= 30 ? "muted" : "bad")}">${sAgo > 0 ? "-" + sAgo + "s" : "now"}</span>`;
 
-      const accountId = acc.accountId || "";
-      const settings = acc.settings || {};
-      const tp = Number(settings.profitTargetUsd ?? settings.tp ?? 0);
-      const sl = Number(settings.lossLimitUsd ?? settings.sl ?? 0);
+      const accountId = acc.accountId ?? "";
 
-      // NOTE: we render inputs without extra labels to avoid "Name/Balance" duplication
       return `
         <tr>
-          <td>${escapeHtml(String(name))}</td>
-          <td><span class="pill">${ordersCount}</span></td>
-          <td><span class="pill ${profitClass}">${profitText}</span></td>
-          <td><span class="pill">${fmt2(balance)}</span></td>
-          <td><span class="pill">${fmt2(equity)}</span></td>
-          <td>${lastUpdateCell}</td>
-          <td>
-            <div class="settings">
-              <input class="sinput" inputmode="decimal" type="number" step="0.01" min="0" value="${isFinite(tp)?tp:0}" id="tp_${escapeHtml(accountId)}" title="TP USD (0 تعطيل)">
-              <input class="sinput" inputmode="decimal" type="number" step="0.01" min="0" value="${isFinite(sl)?sl:0}" id="sl_${escapeHtml(accountId)}" title="SL USD (0 تعطيل)">
-              <button class="sbtn" onclick="saveSettings('${encodeURIComponent(accountId)}')">حفظ</button>
-            </div>
-          </td>
+          <td><div class="mrow"><span class="mlabel">Name</span><strong>${escapeHtml(name)}</strong></div></td>
+          <td><div class="mrow"><span class="mlabel">Equity</span><span class="pill">${fmt2(equity)}</span></div></td>
+          <td><div class="mrow"><span class="mlabel">Balance</span><span class="pill">${fmt2(balance)}</span></div></td>
+          <td><div class="mrow"><span class="mlabel">Profit</span><span class="pill ${profitClass}">${profitText}</span></div></td>
+          <td><div class="mrow"><span class="mlabel">Orders</span><span class="pill">${ordersCount}</span></div></td>
+          <td><div class="mrow"><span class="mlabel">Update</span>${lastUpdateCell}</div></td>
           <td class="action-cell">
             <button class="rowbtn" onclick="panicOne('${encodeURIComponent(accountId)}')">Close All</button>
           </td>
@@ -366,8 +401,6 @@
     }).join("");
 
     els.tbody.innerHTML = rows;
-    els.allProfit.textContent = fmt2(allProfit);
-    els.allProfit.className = "sumValue " + (allProfit >= 0 ? "good" : "bad");
   }
 
   // ===== Actions =====
@@ -381,7 +414,10 @@
 
   async function panicOne(accountIdEnc){
     const accountId = decodeURIComponent(accountIdEnc || "");
-    if(!accountId){ alert("accountId غير موجود من السيرفر."); return; }
+    if(!accountId){
+      alert("accountId غير موجود من السيرفر.");
+      return;
+    }
     return fetchJSON(PANIC_ENDPOINT, {
       method:"POST",
       headers: headers(),
@@ -389,37 +425,23 @@
     });
   }
 
-  async function saveSettings(accountIdEnc){
-    const accountId = decodeURIComponent(accountIdEnc || "");
-    const tpEl = document.getElementById(`tp_${accountId}`);
-    const slEl = document.getElementById(`sl_${accountId}`);
-    const tp = tpEl ? Number(tpEl.value || 0) : 0;
-    const sl = slEl ? Number(slEl.value || 0) : 0;
-
-    // 0 = تعطيل (حسب طلبك)
-    const payload = { accountId, profitTargetUsd: Math.max(0, tp), lossLimitUsd: Math.max(0, sl) };
-
-    try{
-      await fetchJSON(SETTINGS_ENDPOINT, { method:"POST", headers: headers(), body: JSON.stringify(payload) });
-      setStatus(true, `تم حفظ إعدادات ${accountId}`);
-      setTimeout(tick, 400);
-    }catch(e){
-      alert("فشل حفظ الإعدادات: " + e.message);
-    }
-  }
-
   window.panicOne = async (id) => {
-    try{ await panicOne(id); setTimeout(tick, 600); }
-    catch(e){ alert("فشل الإغلاق: " + e.message); }
+    try{
+      await panicOne(id);
+      setTimeout(tick, 700);
+    }catch(e){
+      alert("فشل الإغلاق: " + e.message);
+    }
   };
-  window.saveSettings = saveSettings;
 
   // ===== Polling =====
   async function tick(){
     try{
       const data = await fetchJSON(ACCOUNTS_ENDPOINT, { headers: headers() });
-      const list = data && data.accounts ? data.accounts : [];
-      renderAccounts(list);
+      const rawList = (data && data.accounts) ? data.accounts : [];
+      const stableList = ensureStableOrder(rawList);   // ✅ تثبيت الترتيب
+      renderAccounts(stableList);
+
       setStatus(true, "متصل");
       els.lastUpdatedText.textContent = new Date().toLocaleString("ar", { hour12: true });
     }catch(err){
@@ -429,12 +451,19 @@
 
   // ===== Init =====
   els.apiKey.value = getApiKey();
-  els.saveKey.addEventListener("click", () => { setApiKey(els.apiKey.value); alert("تم حفظ API KEY"); });
+  els.saveKey.addEventListener("click", () => {
+    setApiKey(els.apiKey.value);
+    alert("تم حفظ API KEY");
+  });
 
   els.closeAll.addEventListener("click", async () => {
     if(!confirm("متأكد تبي إغلاق جميع الصفقات على كل الحسابات؟")) return;
-    try{ await panicAll(); setTimeout(tick, 600); }
-    catch(e){ alert("فشل الإغلاق للجميع: " + e.message); }
+    try{
+      await panicAll();
+      setTimeout(tick, 700);
+    }catch(e){
+      alert("فشل الإغلاق للجميع: " + e.message);
+    }
   });
 
   tick();
