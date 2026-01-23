@@ -212,7 +212,7 @@ app.post("/copier/push", (req, res) => {
     magic: Number(e.magic || 0),
     comment: String(e.comment || ""),
     open_time: Number(e.open_time || 0),
-    master_equity: Number(b.master_equity || 0), // ✅
+    master_equity: Number(e.master_equity || 0), // ✅
 
 
     // per-slave ack map: slaveId -> { status, err, ts }
