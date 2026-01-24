@@ -104,7 +104,7 @@ function clientActive(c) {
   return true;
 }
 
-// Require Client API key for slave endpoints
+// Require Client API key for slave endpoints (OPTIONAL)
 function requireClientOptional(req, res, groupIdFromReq) {
   const k = (req.get("x-api-key") || "").trim();
 
@@ -194,16 +194,36 @@ app.post("/command_ack", (req, res) => {
 });
 
 // ================= Copier (Disk) =================
-let copier = readJsonSafe(FILES.COPIER_FILE, { nextId: 1, events: [], lastMasterEquityByGroup: {} });
-let slaves = readJsonSafe(FILES.SLAVES_FILE, { slaves: {} }); // key group|slaveId -> { lastAckId,lastSeenAt }
+let copier = readJsonSafe(FILES.COPIER_FILE, {
+  nextId: 1,
+  events: [],
+  lastMasterEquityByGroup: {}
+});
+
+let slaves = readJsonSafe(FILES.SLAVES_FILE, {
+  slaves: {} // key group|slaveId -> { lastAckId,lastSeenAt }
+});
 
 function saveCopier() {
   // keep last 50k
+  copier.events = copier.events || [];
   if (copier.events.length > 50000) copier.events = copier.events.slice(-50000);
   writeJsonSafe(FILES.COPIER_FILE, copier);
 }
 function saveSlaves() { writeJsonSafe(FILES.SLAVES_FILE, slaves); }
 function slaveKey(group, slaveId) { return `${group}|${slaveId}`; }
+
+function getSlaveIdsForGroup(group) {
+  const ids = [];
+  const all = slaves.slaves || {};
+  for (const k of Object.keys(all)) {
+    if (k.startsWith(group + "|")) {
+      const sid = k.split("|")[1] || "";
+      if (sid) ids.push(sid);
+    }
+  }
+  return ids;
+}
 
 app.get("/copier/health", (req, res) => {
   ok(res, {
@@ -225,15 +245,40 @@ app.post("/copier/push", (req, res) => {
   const type = String(e.type || "");
   if (!group || !type) return bad(res, 400, "missing group/type");
 
+  const master_ticket = Number(e.master_ticket || 0);
+  const open_time = Number(e.open_time || 0);
+  const symbol = String(e.symbol || "");
+
+  if (!master_ticket || !symbol) return bad(res, 400, "missing master_ticket/symbol");
+
+  // ✅ master_equity fallback: لو الماستر ما أرسلها أو أرسل 0
+  copier.lastMasterEquityByGroup = copier.lastMasterEquityByGroup || {};
+  let master_equity = Number(e.master_equity || 0);
+  if (!master_equity || master_equity <= 0) {
+    master_equity = Number(copier.lastMasterEquityByGroup[group] || 0);
+  }
+
+  // ✅ Dedup: نفس (group,type,master_ticket,open_time) لا نكرر
+  copier.events = copier.events || [];
+  const existing = copier.events.find(x =>
+    x.group === group &&
+    x.type === type &&
+    Number(x.master_ticket) === master_ticket &&
+    Number(x.open_time) === open_time
+  );
+  if (existing) {
+    return ok(res, { id: existing.id, dup: true });
+  }
+
   const ev = {
     id: copier.nextId++,
     group,
     type,                     // OPEN | MODIFY | CLOSE
     ts: nowMs(),
 
-    master_ticket: Number(e.master_ticket || 0),
-    open_time: Number(e.open_time || 0),
-    symbol: String(e.symbol || ""),
+    master_ticket,
+    open_time,
+    symbol,
     cmd: Number(e.cmd || 0),
     lots: Number(e.lots || 0),
     price: Number(e.price || 0),
@@ -241,16 +286,14 @@ app.post("/copier/push", (req, res) => {
     tp: Number(e.tp || 0),
     magic: Number(e.magic || 0),
     comment: String(e.comment || ""),
-    master_equity: Number(e.master_equity || 0),
+    master_equity: master_equity || 0,
+
+    acks: {}, // ✅ per-slave ack map
   };
-
-  if (!ev.master_ticket || !ev.symbol) return bad(res, 400, "missing master_ticket/symbol");
-
 
   copier.events.push(ev);
 
   // store last master equity for equity ratio
-  copier.lastMasterEquityByGroup = copier.lastMasterEquityByGroup || {};
   if (ev.master_equity > 0) copier.lastMasterEquityByGroup[group] = ev.master_equity;
 
   saveCopier();
@@ -278,6 +321,7 @@ app.post("/copier/registerSlave", (req, res) => {
   }
 
   // تسجيل السلايف عادي
+  slaves.slaves = slaves.slaves || {};
   const k = slaveKey(group, slaveId);
   if (!slaves.slaves[k]) slaves.slaves[k] = { lastAckId: 0, lastSeenAt: 0 };
   slaves.slaves[k].lastSeenAt = nowMs();
@@ -285,7 +329,6 @@ app.post("/copier/registerSlave", (req, res) => {
 
   return ok(res, { boundSlaveId: c ? c.boundSlaveId : "" });
 });
-
 
 // Slave polls events
 app.get("/copier/events", (req, res) => {
@@ -309,22 +352,26 @@ app.get("/copier/events", (req, res) => {
     }
   }
 
+  slaves.slaves = slaves.slaves || {};
   const k = slaveKey(group, slaveId);
   if (!slaves.slaves[k]) slaves.slaves[k] = { lastAckId: 0, lastSeenAt: 0 };
   slaves.slaves[k].lastSeenAt = nowMs();
   saveSlaves();
 
   const out = [];
-  for (const ev of copier.events) {
+  for (const ev of (copier.events || [])) {
     if (ev.group !== group) continue;
-    if (ev.id <= since) continue;
+    if (Number(ev.id) <= since) continue;
+
+    // ✅ IMPORTANT: لا ترجع حدث تم ACK عليه من هذا السلايف
+    if (ev.acks && ev.acks[slaveId]) continue;
+
     out.push(ev);
     if (out.length >= limit) break;
   }
 
   return ok(res, { now: nowMs(), events: out });
 });
-
 
 // Slave ACK
 app.post("/copier/ack", (req, res) => {
@@ -333,6 +380,8 @@ app.post("/copier/ack", (req, res) => {
   const slaveId = String(b.slaveId || "");
   const event_id = Number(b.event_id || 0);
   const status = String(b.status || "");
+  const err = String(b.err || "");
+
   if (!group || !slaveId || !event_id || !status) return bad(res, 400, "missing fields");
 
   const c = requireClientOptional(req, res, group);
@@ -343,15 +392,38 @@ app.post("/copier/ack", (req, res) => {
     return bad(res, 403, "boundSlaveId mismatch");
   }
 
+  slaves.slaves = slaves.slaves || {};
   const k = slaveKey(group, slaveId);
   if (!slaves.slaves[k]) slaves.slaves[k] = { lastAckId: 0, lastSeenAt: 0 };
   slaves.slaves[k].lastAckId = Math.max(Number(slaves.slaves[k].lastAckId || 0), event_id);
   slaves.slaves[k].lastSeenAt = nowMs();
   saveSlaves();
 
+  // ✅ IMPORTANT: سجّل ACK داخل الحدث نفسه (acks per-event)
+  const ev = (copier.events || []).find(x => Number(x.id) === event_id && x.group === group);
+  if (ev) {
+    ev.acks = ev.acks || {};
+    ev.acks[slaveId] = { status, err, ts: nowMs() };
+    saveCopier();
+  }
+
+  // ✅ Cleanup: إذا كل سلايف معروفين في هذا الجروب ACKوا الحدث -> احذف الأحداث القديمة
+  // (اختياري لكن مفيد لتخفيف حجم الملف)
+  const slaveIds = getSlaveIdsForGroup(group);
+  if (slaveIds.length > 0) {
+    copier.events = (copier.events || []).filter(ev2 => {
+      if (ev2.group !== group) return true;
+      if (!ev2.acks) return true;
+      for (const sid of slaveIds) {
+        if (!ev2.acks[sid]) return true; // في سلايف ما ACK -> خله
+      }
+      return false; // الكل ACK -> احذفه
+    });
+    saveCopier();
+  }
+
   return ok(res, {});
 });
-
 
 // ================= Admin endpoints =================
 app.get("/admin/clients", (req, res) => {
@@ -374,13 +446,13 @@ app.post("/admin/clients/add", (req, res) => {
   const createdAt = nowMs();
   const expiresAt = createdAt + addDurationMs(duration);
 
-  const c = { clientId, fullName, groupId, apiKey, enabled: true, createdAt, expiresAt, boundSlaveId: "" };
+  const cobj = { clientId, fullName, groupId, apiKey, enabled: true, createdAt, expiresAt, boundSlaveId: "" };
 
   clients.clients = clients.clients || [];
-  clients.clients.push(c);
+  clients.clients.push(cobj);
   saveClients();
 
-  ok(res, { client: c });
+  ok(res, { client: cobj });
 });
 
 app.post("/admin/clients/disable", (req, res) => {
@@ -389,9 +461,9 @@ app.post("/admin/clients/disable", (req, res) => {
   const clientId = String(b.clientId || "");
   const enabled = Boolean(b.enabled);
 
-  const c = findClientById(clientId);
-  if (!c) return bad(res, 404, "not found");
-  c.enabled = enabled;
+  const cobj = findClientById(clientId);
+  if (!cobj) return bad(res, 404, "not found");
+  cobj.enabled = enabled;
   saveClients();
   ok(res, {});
 });
@@ -402,14 +474,14 @@ app.post("/admin/clients/extend", (req, res) => {
   const clientId = String(b.clientId || "");
   const duration = String(b.duration || "M1");
 
-  const c = findClientById(clientId);
-  if (!c) return bad(res, 404, "not found");
+  const cobj = findClientById(clientId);
+  if (!cobj) return bad(res, 404, "not found");
 
-  const base = Math.max(nowMs(), Number(c.expiresAt || 0));
-  c.expiresAt = base + addDurationMs(duration);
+  const base = Math.max(nowMs(), Number(cobj.expiresAt || 0));
+  cobj.expiresAt = base + addDurationMs(duration);
   saveClients();
 
-  ok(res, { expiresAt: c.expiresAt });
+  ok(res, { expiresAt: cobj.expiresAt });
 });
 
 app.post("/admin/clients/resetBind", (req, res) => {
@@ -417,10 +489,10 @@ app.post("/admin/clients/resetBind", (req, res) => {
   const b = req.body || {};
   const clientId = String(b.clientId || "");
 
-  const c = findClientById(clientId);
-  if (!c) return bad(res, 404, "not found");
+  const cobj = findClientById(clientId);
+  if (!cobj) return bad(res, 404, "not found");
 
-  c.boundSlaveId = "";
+  cobj.boundSlaveId = "";
   saveClients();
   ok(res, {});
 });
