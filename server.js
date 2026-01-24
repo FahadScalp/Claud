@@ -245,15 +245,7 @@ app.post("/copier/push", (req, res) => {
   };
 
   if (!ev.master_ticket || !ev.symbol) return bad(res, 400, "missing master_ticket/symbol");
-console.log("[PUSH]", {
-  id,
-  group,
-  type,
-  master_ticket: evt.master_ticket,
-  symbol: evt.symbol,
-  open_time: evt.open_time,
-  ts: evt.ts
-});
+
 
   copier.events.push(ev);
 
