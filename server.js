@@ -69,15 +69,20 @@ function addDurationMs(code) {
 
 // ================= Auth =================
 function authOk(req) {
+  // حماية قديمة (API_KEY) اختيارية
   if (!API_KEY) return true;
   return (req.get("x-api-key") || "") === API_KEY;
 }
+
 function adminOk(req) {
-  if (!ADMIN_KEY) return false; // لازم يكون موجود
+  // ADMIN_KEY اختياري (لو فاضي = بدون حماية)
+  if (!ADMIN_KEY) return true;
   return (req.get("x-admin-key") || "") === ADMIN_KEY;
 }
+
 function masterOk(req) {
-  if (!MASTER_KEY) return false; // لازم يكون موجود
+  // MASTER_KEY اختياري (لو فاضي = بدون حماية)
+  if (!MASTER_KEY) return true;
   return (req.get("x-master-key") || "") === MASTER_KEY;
 }
 
@@ -100,18 +105,21 @@ function clientActive(c) {
 }
 
 // Require Client API key for slave endpoints
-function requireClient(req, res, groupIdFromReq) {
+function requireClientOptional(req, res, groupIdFromReq) {
   const k = (req.get("x-api-key") || "").trim();
-  if (!k) { bad(res, 401, "missing x-api-key"); return null; }
 
+  // ✅ إذا ما في api key -> اسمح (مثل قبل)
+  if (!k) return null; // null معناها "بدون عميل/بدون تحقق"
+
+  // إذا فيه api key -> تحقق SaaS
   const c = findClientByApiKey(k);
-  if (!c) { bad(res, 401, "invalid api key"); return null; }
+  if (!c) { bad(res, 401, "invalid api key"); return "DENY"; }
 
-  if (!clientActive(c)) { bad(res, 403, "expired/disabled"); return null; }
+  if (!clientActive(c)) { bad(res, 403, "expired/disabled"); return "DENY"; }
 
   if (groupIdFromReq && String(c.groupId) !== String(groupIdFromReq)) {
     bad(res, 403, "group mismatch");
-    return null;
+    return "DENY";
   }
   return c;
 }
@@ -255,23 +263,28 @@ app.post("/copier/registerSlave", (req, res) => {
   const slaveId = String(b.slaveId || "");
   if (!group || !slaveId) return bad(res, 400, "missing group/slaveId");
 
-  const c = requireClient(req, res, group);
-  if (!c) return;
+  const c = requireClientOptional(req, res, group);
+  if (c === "DENY") return;
 
-  if (!c.boundSlaveId) {
-    c.boundSlaveId = slaveId;
-    saveClients();
-  } else if (c.boundSlaveId !== slaveId) {
-    return bad(res, 403, "this api key is already bound to another slaveId");
+  // ✅ إذا فيه عميل (api key موجود) طبق bind
+  if (c) {
+    if (!c.boundSlaveId) {
+      c.boundSlaveId = slaveId;
+      saveClients();
+    } else if (c.boundSlaveId !== slaveId) {
+      return bad(res, 403, "this api key is already bound to another slaveId");
+    }
   }
 
+  // تسجيل السلايف عادي
   const k = slaveKey(group, slaveId);
   if (!slaves.slaves[k]) slaves.slaves[k] = { lastAckId: 0, lastSeenAt: 0 };
   slaves.slaves[k].lastSeenAt = nowMs();
   saveSlaves();
 
-  ok(res, { boundSlaveId: c.boundSlaveId });
+  return ok(res, { boundSlaveId: c ? c.boundSlaveId : "" });
 });
+
 
 // Slave polls events
 app.get("/copier/events", (req, res) => {
@@ -282,14 +295,17 @@ app.get("/copier/events", (req, res) => {
 
   if (!group || !slaveId) return bad(res, 400, "missing group/slaveId");
 
-  const c = requireClient(req, res, group);
-  if (!c) return;
+  const c = requireClientOptional(req, res, group);
+  if (c === "DENY") return;
 
-  if (!c.boundSlaveId) {
-    c.boundSlaveId = slaveId;
-    saveClients();
-  } else if (c.boundSlaveId !== slaveId) {
-    return bad(res, 403, "boundSlaveId mismatch (1 account per client)");
+  // ✅ إذا api key موجود -> enforce bind
+  if (c) {
+    if (!c.boundSlaveId) {
+      c.boundSlaveId = slaveId;
+      saveClients();
+    } else if (c.boundSlaveId !== slaveId) {
+      return bad(res, 403, "boundSlaveId mismatch (1 account per client)");
+    }
   }
 
   const k = slaveKey(group, slaveId);
@@ -305,12 +321,9 @@ app.get("/copier/events", (req, res) => {
     if (out.length >= limit) break;
   }
 
-  ok(res, {
-    now: nowMs(),
-    events: out,
-    lastMasterEquity: Number((copier.lastMasterEquityByGroup || {})[group] || 0),
-  });
+  return ok(res, { now: nowMs(), events: out });
 });
+
 
 // Slave ACK
 app.post("/copier/ack", (req, res) => {
@@ -321,10 +334,13 @@ app.post("/copier/ack", (req, res) => {
   const status = String(b.status || "");
   if (!group || !slaveId || !event_id || !status) return bad(res, 400, "missing fields");
 
-  const c = requireClient(req, res, group);
-  if (!c) return;
+  const c = requireClientOptional(req, res, group);
+  if (c === "DENY") return;
 
-  if (c.boundSlaveId && c.boundSlaveId !== slaveId) return bad(res, 403, "boundSlaveId mismatch");
+  // ✅ إذا api key موجود -> enforce bind
+  if (c && c.boundSlaveId && c.boundSlaveId !== slaveId) {
+    return bad(res, 403, "boundSlaveId mismatch");
+  }
 
   const k = slaveKey(group, slaveId);
   if (!slaves.slaves[k]) slaves.slaves[k] = { lastAckId: 0, lastSeenAt: 0 };
@@ -332,8 +348,9 @@ app.post("/copier/ack", (req, res) => {
   slaves.slaves[k].lastSeenAt = nowMs();
   saveSlaves();
 
-  ok(res, {});
+  return ok(res, {});
 });
+
 
 // ================= Admin endpoints =================
 app.get("/admin/clients", (req, res) => {
